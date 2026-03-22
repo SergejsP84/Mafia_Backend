@@ -110,6 +110,40 @@ The app will seed roles and default config settings on first startup.
 | `RoleController` | Role catalogue |
 | `DebugController` | Dev/testing utilities |
 
+## Notable Design Decisions
+
+A few areas worth looking at if you want to understand how the game is put together:
+
+---
+
+### [VictoryService.java](src/main/java/com/mafia/mafia_backend/service/implementation/VictoryService.java) — Rule-based win conditions
+
+Win conditions are modelled as a list of `VictoryRule` objects, each wrapping a `Predicate<GameSessionRuntime>` and a winner alignment. Evaluating the game is a single `rules.stream().filter(...).findFirst()`. Adding a new win condition means appending a rule — no branching in the caller, no switch statement to maintain.
+
+---
+
+### [ActionService.java — `resolveNightActions()`](src/main/java/com/mafia/mafia_backend/service/implementation/ActionService.java) — The lore/mechanics split
+
+Lore-wise, actions happen at night. Technically, they are only *queued* during `NIGHT` — the actual resolution fires sequentially at the start of `DAY_RESULTS`. Resolution is ordered by role (Sheriff first, then the active Mafia soldier determined by a rotating `mafiaOrder` index), each producing a `ResultRecord` that drives both the public announcement and the in-game effect (money changes, kills, private intelligence).
+
+---
+
+### [GameSessionRuntime.java](src/main/java/com/mafia/mafia_backend/domain/model/GameSessionRuntime.java) — Thread-safe in-memory game state
+
+The entire live game state lives in a single runtime object — no round-tripping to the database mid-game. Highlights:
+- `ConcurrentHashMap<Long, LocalDateTime> lastVoteTimestamps` — per-voter rate limiting without a separate service
+- `synchronized beginPhaseAdvance()` / `endPhaseAdvance()` — a lightweight mutex preventing two scheduler ticks from advancing the phase simultaneously
+- `addNightAction()` replaces any existing action from the same actor, making resubmission naturally idempotent
+- Contract bounty aggregation via `getAggregatedContracts()` — issuers commit intent but money isn't deducted until resolution
+
+---
+
+### [GamePhaseScheduler.java](src/main/java/com/mafia/mafia_backend/process/GamePhaseScheduler.java) — Automated phase transitions
+
+A `@Scheduled` component polls all active sessions every 5 seconds and advances any that have timed out or met their completion criteria (all votes in, all night actions submitted, etc.). Phase durations come from `ConfigSettingService` so they can be tuned without a redeploy.
+
+---
+
 ## Status
 
 Work in progress. Core game loop is functional; some phases and features are still being built out.
