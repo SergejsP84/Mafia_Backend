@@ -764,4 +764,11 @@ public class GameManagerService implements GameManagerServiceInterface {
         }
         return false;
     }
+
+    public GameSessionRuntime findById(Long id) {
+        return activeGames.stream()
+                .filter(s -> s.getGame() != null && id.equals(s.getGame().getId()))
+                .findFirst()
+                .orElse(null);
+    }
 }

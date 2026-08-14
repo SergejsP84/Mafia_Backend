@@ -143,7 +143,7 @@ public class GamePhaseScheduler {
 
         for (GameSessionRuntime game : snapshot) {
             if (game == null || game.getGame() == null) continue;
-            if (game.getStage() == GamePhase.CANCELED || game.getGame().getPhase() == GamePhase.CANCELED) continue;
+            if (game.getStage() == GamePhase.CANCELED) continue;
 
             GamePhase currentPhase = game.getStage();
 

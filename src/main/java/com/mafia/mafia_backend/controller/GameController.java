@@ -112,12 +112,12 @@ public class GameController {
 
     @GetMapping("/{id}/status")
     public ResponseEntity<GamePhase> getGamePhase(@PathVariable Long id) {
-        Game game = gameRegistry.getGame(id);
-        if (game == null) {
+        GameSessionRuntime session = gameManagerService.findById(id);
+        if (session == null) {
             System.out.println("CANNOT FIND THE GAME PORKLET!");
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(game.getPhase());
+        return ResponseEntity.ok(session.getStage());
     }
 
     @GetMapping("/{id}/state")
@@ -157,7 +157,7 @@ public class GameController {
 
         List<Map<String, Object>> result = gameManagerService.getActiveGames().stream()
                 .filter(session -> {
-                    GamePhase phase = session.getGame().getPhase();
+                    GamePhase phase = session.getStage();
                     return phase != GamePhase.CANCELED && phase != GamePhase.ENDED;
                 })
                 .map(session -> {
@@ -180,5 +180,27 @@ public class GameController {
                 .toList();
 
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/{gameId}/public-messages")
+    public ResponseEntity<List<String>> getPublicMessages(
+            @PathVariable Long gameId,
+            @RequestParam(defaultValue = "0") int fromIndex) {
+
+        Optional<GameSessionRuntime> gameOpt = gameManagerService.findSessionById(gameId);
+
+        if (gameOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        GameSessionRuntime game = gameOpt.get();
+
+        List<String> messages = game.getPublicMessages();
+
+        if (fromIndex >= messages.size()) {
+            return ResponseEntity.ok(Collections.emptyList());
+        }
+
+        return ResponseEntity.ok(messages.subList(fromIndex, messages.size()));
     }
 }

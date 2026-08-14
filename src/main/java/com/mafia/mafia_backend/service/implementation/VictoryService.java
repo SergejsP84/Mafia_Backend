@@ -90,7 +90,7 @@ public class VictoryService {
 
                     boolean mafiaHasMajority = alive.stream()
                             .filter(p -> p.getAlignment() == Alignment.MAFIA).count()
-                            > alive.stream()
+                            >= alive.stream()
                             .filter(p -> p.getAlignment() != Alignment.MAFIA).count();
 
                     return mafiaAlive && !otherKillersAlive && mafiaHasMajority;

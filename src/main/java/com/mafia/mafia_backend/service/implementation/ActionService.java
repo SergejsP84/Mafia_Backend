@@ -4,6 +4,7 @@ import com.mafia.mafia_backend.domain.dto.NightActionCatalogDTO;
 import com.mafia.mafia_backend.domain.dto.NightActionOptionDTO;
 import com.mafia.mafia_backend.domain.dto.NightTargetsDTO;
 import com.mafia.mafia_backend.domain.dto.TargetUserDTO;
+import com.mafia.mafia_backend.domain.entity.Role;
 import com.mafia.mafia_backend.domain.enums.ActionType;
 import com.mafia.mafia_backend.domain.enums.Alignment;
 import com.mafia.mafia_backend.domain.enums.GamePhase;
@@ -12,6 +13,7 @@ import com.mafia.mafia_backend.domain.enums.NightActionType;
 import com.mafia.mafia_backend.service.interfaces.ActionServiceInterface;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import com.mafia.mafia_backend.service.implementation.PrivateMessagingService;
 
 
 import java.time.Duration;
@@ -33,15 +35,36 @@ public class ActionService implements ActionServiceInterface {
     @Autowired
     private GameManagerService gameManagerService;
 
+    @Autowired
+    private PrivateMessagingService privateMessagingService;
+
     @Override
     public void submitNightAction(GameSessionRuntime game, NightAction action) {
         game.addNightAction(action.getNightNumber(), action);
-        Optional<PlayerInGame> playerInGameOptional = game.findPlayerById(action.getActorId());
-        if (playerInGameOptional.isPresent()) {
-            playerInGameOptional.get().setHasActedTonight(true);
-        } else {
-            throw new IllegalArgumentException("Player not found in the game");
+
+        PlayerInGame actor = game.findPlayerById(action.getActorId())
+                .orElseThrow(() -> new IllegalArgumentException("Player not found in the game"));
+
+        actor.setHasActedTonight(true);
+
+        Role actorRole = actor.getRole();
+
+        if (actorRole != null) {
+            String roleName = actorRole.getRoleName();
+
+            String message = switch (roleName.toLowerCase()) {
+                case "sheriff" ->
+                        "Sirens echo across the night streets; the Sheriff is out to do his job...";
+                case "mafia" ->
+                        "The Mafia meeting at an underworld restaurant is over. Someone's fate is sealed tonight...";
+                default -> null;
+            };
+
+            if (message != null) {
+                game.addPublicMessage(message);
+            }
         }
+
         game.addLog("Player " + action.getActorId() + " submitted action: " + action.getActionType()
                 + " targeting " + action.getTargetId());
     }
@@ -98,7 +121,7 @@ public class ActionService implements ActionServiceInterface {
                                 .findFirst()
                                 .orElse(null);
 
-                        if (sheriffAction == null) {
+                        if (sheriffAction == null || sheriffAction.getActionType() == NightActionType.SKIP) {
                             processSheriffSkip(game, sheriff, resultStorage);
                         } else if (sheriffAction.getActionType() == NightActionType.CHECK) {
                             processSheriffCheck(game, sheriff, sheriffAction, resultStorage);
@@ -122,7 +145,7 @@ public class ActionService implements ActionServiceInterface {
                             .findFirst()
                             .orElse(null);
 
-                    if (mafiaAction == null) {
+                    if (mafiaAction == null || mafiaAction.getActionType() == NightActionType.SKIP) {
                         processMafiaSkip(game, mafia, resultStorage);
                     } else if (mafiaAction.getActionType() == NightActionType.KILL) {
                         processMafiaKill(game, mafia, mafiaAction, resultStorage);
@@ -199,6 +222,7 @@ public class ActionService implements ActionServiceInterface {
 
         // Optional: if we already track skip counters
         sheriff.setSkipCount(sheriff.getSkipCount()+1);
+        sheriff.setInGameMoney(sheriff.getInGameMoney() + record.getMoneyChange());
         game.addLog("Sheriff " + sheriff.getUser().getUsername() + " skipped the night and was penalized " + record.getMoneyChange() + "$.");
     }
 
@@ -245,6 +269,11 @@ public class ActionService implements ActionServiceInterface {
         String privateInfo = "Intelligence has revealed that " + target.getUser().getUsername() +
                 " is a " + targetRoleName + "!";
         game.addLog("[Office Intel for Sheriff " + sheriff.getUser().getUsername() + "]: " + privateInfo);
+
+        privateMessagingService.sendPrivateMessage(
+                sheriff.getUser().getId(),
+                "🔍 " + privateInfo
+        );
 
         // Apply reward directly
         sheriff.setInGameMoney(sheriff.getInGameMoney() + reward);

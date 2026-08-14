@@ -66,9 +66,24 @@ public class GameSessionRuntime {
         return findPlayerById(userId);
     }
 
+    public void setGame(Game game) {
+        this.game = game;
+        if (game != null) {
+            game.setPhase(stage);
+        }
+    }
+
+    public void setStage(GamePhase newStage) {
+        advanceStage(newStage);
+    }
+
     public void advanceStage(GamePhase newStage) {
+        Objects.requireNonNull(newStage, "Game stage cannot be null");
         this.stage = newStage;
         this.stageStartedAt = LocalDateTime.now();
+        if (game != null) {
+            game.setPhase(newStage);
+        }
     }
 
     public void addLog(String entry) {
@@ -86,7 +101,8 @@ public class GameSessionRuntime {
         publicMessages.add(formatted);
 
         // Optional: limit to last N messages (say 500) to avoid memory overflow
-        if (publicMessages.size() > 500) {
+        // Pig increased size to 10000... think it is safe? Long games can have many messages, especially given that the bot makes all announcements in the public chat, and people might want to review the start of the game for proper deduction.
+        if (publicMessages.size() > 10000) {
             publicMessages.remove(0);
         }
     }
