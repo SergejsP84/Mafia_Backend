@@ -25,6 +25,7 @@ public class GameSessionRuntime {
     private LocalDateTime stageStartedAt = LocalDateTime.now(); // When current stage began
 
     private List<PlayerInGame> players = new ArrayList<>();     // All players in this match
+    private Integer initialPlayerCount;
     private Map<String, Object> stageData = new HashMap<>();    // Optional per-stage info
     private List<String> log = new ArrayList<>();               // Game log for summary
 

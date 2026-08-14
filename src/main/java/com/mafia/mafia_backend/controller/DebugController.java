@@ -4,6 +4,7 @@ import com.mafia.mafia_backend.domain.enums.GamePhase;
 import com.mafia.mafia_backend.domain.model.GameSessionRuntime;
 import com.mafia.mafia_backend.domain.model.NightAction;
 import com.mafia.mafia_backend.domain.model.PlayerInGame;
+import com.mafia.mafia_backend.service.implementation.GameEconomyService;
 import com.mafia.mafia_backend.service.implementation.GameManagerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -18,6 +19,7 @@ import java.util.*;
 public class DebugController {
 
     private final GameManagerService gameManagerService;
+    private final GameEconomyService gameEconomyService;
 
     @PostMapping("/force-stage/by-game/{gameId}/{phase}")
     public ResponseEntity<String> forceStageByGame(@PathVariable Long gameId,
@@ -62,6 +64,31 @@ public class DebugController {
         return ResponseEntity.ok(game.getActionsForNight(nightNumber));
     }
 
+    @PostMapping("/game/{gameId}/player/{userId}/money/{amount}")
+    public ResponseEntity<?> setPlayerMoney(@PathVariable Long gameId,
+                                            @PathVariable Long userId,
+                                            @PathVariable long amount) {
+        GameSessionRuntime game = gameManagerService.findByGameId(gameId);
+        if (game == null) return ResponseEntity.notFound().build();
+
+        Optional<PlayerInGame> playerOpt = game.findPlayerByUserId(userId);
+        if (playerOpt.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Player not found in game"));
+        }
+
+        PlayerInGame player = playerOpt.get();
+        long delta = amount - player.getInGameMoney();
+        gameEconomyService.adjustMoney(game, player, delta, "Debug money set");
+
+        return ResponseEntity.ok(new DebugMoneyResponse(
+                player.getUser().getUsername(),
+                player.getUser().getId(),
+                player.getInGameMoney(),
+                player.getTier()
+        ));
+    }
+
     @GetMapping("/{sessionId}/mafia-order")
     public ResponseEntity<Map<String, Object>> getMafiaOrder(@PathVariable UUID sessionId) {
         Optional<GameSessionRuntime> gameOpt = gameManagerService.findSessionByUuid(sessionId);
@@ -85,6 +112,9 @@ public class DebugController {
                         : null);
 
         return ResponseEntity.ok(result);
+    }
+
+    public record DebugMoneyResponse(String player, Long userId, long money, int tier) {
     }
 
 }

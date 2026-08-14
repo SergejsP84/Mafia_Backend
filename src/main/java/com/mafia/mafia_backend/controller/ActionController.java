@@ -10,6 +10,7 @@ import com.mafia.mafia_backend.service.implementation.ActionService;
 import com.mafia.mafia_backend.service.implementation.GameManagerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -50,6 +51,11 @@ public class ActionController {
         if (game == null)
             return ResponseEntity.badRequest().body("❌ Game not found");
 
+        if (!actionService.isActiveMafia(game, actorId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Only the active Mafia may submit a Mafia action tonight.");
+        }
+
         Object raw = payload.get("targetUserId");
         Long targetId = (raw instanceof Number)
                 ? ((Number) raw).longValue()
@@ -73,6 +79,11 @@ public class ActionController {
 
         GameSessionRuntime game = gameManagerService.getGameById(sessionId);
         if (game == null) return ResponseEntity.badRequest().body("❌ Game not found");
+
+        if (!actionService.isActiveMafia(game, actorId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Only the active Mafia may submit a Mafia action tonight.");
+        }
 
         int nightNumber = game.getCurrentNightNumber();
         NightAction action = new NightAction(actorId, null, NightActionType.SKIP, nightNumber);

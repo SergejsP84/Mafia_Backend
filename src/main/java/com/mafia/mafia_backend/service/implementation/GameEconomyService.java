@@ -1,6 +1,7 @@
 package com.mafia.mafia_backend.service.implementation;
 
 import com.mafia.mafia_backend.domain.model.GameSessionRuntime;
+import com.mafia.mafia_backend.domain.model.PlayerInGame;
 import com.mafia.mafia_backend.service.interfaces.GameEconomyServiceInterface;
 import org.springframework.stereotype.Service;
 
@@ -11,11 +12,73 @@ public class GameEconomyService implements GameEconomyServiceInterface {
 
     @Override
     public int getTierForMoney(GameSessionRuntime game, int money) {
-        Map<String, Integer> t = (Map<String, Integer>) game.getStageData().get("tierThresholds");
+        return getTierForMoney(game, (long) money);
+    }
+
+    @Override
+    public int getTierForMoney(GameSessionRuntime game, long money) {
+        Map<String, Integer> t = getTierThresholdsFromStageData(game);
         if (money >= t.get("tier4")) return 4;
         if (money >= t.get("tier3")) return 3;
         if (money >= t.get("tier2")) return 2;
         return 1;
+    }
+
+    @Override
+    public int scaleRewardAmount(GameSessionRuntime game, int baseAmount) {
+        if (baseAmount == 0) {
+            return 0;
+        }
+
+        int playerCount = getInitialPlayerCount(game);
+        double rewardScale = Math.sqrt(playerCount / 16.0);
+        int scaledAmount = (int) Math.round(baseAmount * rewardScale);
+
+        if (scaledAmount == 0) {
+            return baseAmount > 0 ? 1 : -1;
+        }
+        return scaledAmount;
+    }
+
+    @Override
+    public void adjustMoney(GameSessionRuntime game, PlayerInGame player, long delta, String reason) {
+        if (player == null) {
+            if (game != null) {
+                game.addLog("WARNING Money adjustment skipped for null player. Reason: " + reason);
+            }
+            return;
+        }
+
+        long beforeMoney = player.getInGameMoney();
+        int beforeTier = player.getTier();
+        long afterMoney = beforeMoney + delta;
+        int afterTier = getTierForMoney(game, afterMoney);
+
+        player.setInGameMoney(afterMoney);
+        player.setTier(afterTier);
+
+        if (game != null) {
+            String username = player.getUser() != null ? player.getUser().getUsername() : "unknown";
+            game.addLog("Money changed for " + username + " by " + signed(delta)
+                    + " (" + reason + "): " + beforeMoney + " -> " + afterMoney);
+
+            if (beforeTier != afterTier) {
+                String direction = afterTier > beforeTier ? "advanced" : "dropped";
+                game.addLog("Tier changed for " + username + ": " + beforeTier
+                        + " -> " + afterTier + " (" + direction + ")");
+            }
+        }
+    }
+
+    private String signed(long value) {
+        return value >= 0 ? "+" + value : Long.toString(value);
+    }
+
+    private int getInitialPlayerCount(GameSessionRuntime game) {
+        if (game == null || game.getInitialPlayerCount() == null || game.getInitialPlayerCount() <= 0) {
+            throw new IllegalStateException("Initial player count is required for reward scaling.");
+        }
+        return game.getInitialPlayerCount();
     }
 
     @SuppressWarnings("unchecked")

@@ -175,11 +175,37 @@ public class GameManagerService implements GameManagerServiceInterface {
         }
     }
 
-    private List<Role> fetchRolesForGame(int playerCount) {
-        List<String> roleNames;
+    public int calculateMafiaCount(int playerCount) {
+        if (playerCount < 4) {
+            throw new IllegalArgumentException("At least 4 players are required for role assignment.");
+        }
+        if (playerCount <= 8) {
+            return 1;
+        }
+        return 2 + (playerCount - 9) / 6;
+    }
 
-        if (playerCount == 4) {
-            roleNames = List.of("Mafia", "Sheriff", "Townsfolk", "Townsfolk");
+    public List<String> buildRoleNamesForGame(int playerCount) {
+        int mafiaCount = calculateMafiaCount(playerCount);
+        List<String> roleNames = new ArrayList<>();
+
+        for (int i = 0; i < mafiaCount; i++) {
+            roleNames.add("Mafia");
+        }
+        roleNames.add("Sheriff");
+
+        while (roleNames.size() < playerCount) {
+            roleNames.add("Townsfolk");
+        }
+
+        return roleNames;
+    }
+
+    private List<Role> fetchRolesForGame(int playerCount) {
+        List<String> roleNames = buildRoleNamesForGame(playerCount);
+
+        if (playerCount >= 4) {
+            roleNames = buildRoleNamesForGame(playerCount);
         } else {
             // For now, just throw — later we’ll expand logic here
             throw new IllegalStateException("Only 4-player games supported at this stage.");
@@ -197,10 +223,24 @@ public class GameManagerService implements GameManagerServiceInterface {
         return selectedRoles;
     }
 
+    public String generateRoleSummary(int playerCount) {
+        Map<String, Long> counts = buildRoleNamesForGame(playerCount).stream()
+                .collect(Collectors.groupingBy(roleName -> roleName, LinkedHashMap::new, Collectors.counting()));
+
+        String summary = counts.entrySet().stream()
+                .map(entry -> entry.getValue() + " " + entry.getKey())
+                .collect(Collectors.joining(", "));
+
+        return "There are " + playerCount + " prominent people living in Maf City: " + summary + ".";
+    }
+
 
     @Override
     public void assignInitialRoles(GameSessionRuntime game) {
         int playerCount = game.getPlayers().size();
+        if (game.getInitialPlayerCount() == null) {
+            game.setInitialPlayerCount(playerCount);
+        }
 
         // Fetch roles based on player count (for now, hardcoded to 4-player roles)
         List<Role> selectedRoles = fetchRolesForGame(playerCount);
@@ -542,7 +582,10 @@ public class GameManagerService implements GameManagerServiceInterface {
 
     @Override
     public void assignTierThresholds(GameSessionRuntime game) {
-        int playerCount = game.getPlayers().size();
+        if (game.getInitialPlayerCount() == null) {
+            game.setInitialPlayerCount(game.getPlayers().size());
+        }
+        int playerCount = game.getInitialPlayerCount();
         double scalingFactor = playerCount / 16.0;
 
         Map<String, Integer> thresholds = new HashMap<>();
@@ -557,6 +600,8 @@ public class GameManagerService implements GameManagerServiceInterface {
 
     @Override
     public boolean allNightActionsComplete(GameSessionRuntime game) {
+        Optional<Long> activeMafiaId = getActiveMafiaId(game);
+
         for (PlayerInGame player : game.getPlayers()) {
             Role role = player.getRole();
 
@@ -570,12 +615,50 @@ public class GameManagerService implements GameManagerServiceInterface {
                 continue;
             }
 
+            if (role.getRoleName().equalsIgnoreCase("mafia")
+                    && activeMafiaId.map(id -> !id.equals(player.getUser().getId())).orElse(true)) {
+                continue;
+            }
+
             // If role has not submitted an action, night is not done
             if (!player.isHasActedTonight()) {
                 return false;
             }
         }
         return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Optional<Long> getActiveMafiaId(GameSessionRuntime game) {
+        Map<String, Object> stageData = game.getStageData();
+        List<Long> mafiaOrder = (List<Long>) stageData.get("mafiaOrder");
+        Integer currentIndex = (Integer) stageData.get("currentMafiaIndex");
+
+        if (mafiaOrder == null || mafiaOrder.isEmpty() || currentIndex == null) {
+            List<Long> aliveMafia = game.getPlayers().stream()
+                    .filter(PlayerInGame::isAlive)
+                    .filter(p -> p.getRole() != null)
+                    .filter(p -> p.getRole().getRoleName().equalsIgnoreCase("mafia"))
+                    .map(p -> p.getUser().getId())
+                    .toList();
+            return aliveMafia.size() == 1 ? Optional.of(aliveMafia.get(0)) : Optional.empty();
+        }
+
+        int index = Math.floorMod(currentIndex, mafiaOrder.size());
+        for (int attempts = 0; attempts < mafiaOrder.size(); attempts++) {
+            Long mafiaId = mafiaOrder.get(index);
+            boolean alive = game.findPlayerById(mafiaId)
+                    .map(PlayerInGame::isAlive)
+                    .orElse(false);
+
+            if (alive) {
+                return Optional.of(mafiaId);
+            }
+
+            index = (index + 1) % mafiaOrder.size();
+        }
+
+        return Optional.empty();
     }
 
     /** Remove a finished/canceled game and scrub transient state to help GC. */

@@ -37,6 +37,14 @@ public class ActionService implements ActionServiceInterface {
 
     @Autowired
     private PrivateMessagingService privateMessagingService;
+    @Autowired
+    private GameEconomyService gameEconomyService;
+
+    public boolean isActiveMafia(GameSessionRuntime game, Long actorId) {
+        return getActiveMafiaId(game)
+                .map(activeMafiaId -> activeMafiaId.equals(actorId))
+                .orElse(false);
+    }
 
     @Override
     public void submitNightAction(GameSessionRuntime game, NightAction action) {
@@ -132,12 +140,9 @@ public class ActionService implements ActionServiceInterface {
                 });
 
         // --- MAFIA TURN ---
-        Map<String, Object> stageData = game.getStageData();
-        List<Long> mafiaOrder = (List<Long>) stageData.get("mafiaOrder");
-        Integer currentIndex = (Integer) stageData.get("currentMafiaIndex");
-
-        if (mafiaOrder != null && currentIndex != null && !mafiaOrder.isEmpty()) {
-            Long activeMafiaId = mafiaOrder.get(currentIndex);
+        Optional<Long> activeMafiaIdOpt = getActiveMafiaId(game);
+        if (activeMafiaIdOpt.isPresent()) {
+            Long activeMafiaId = activeMafiaIdOpt.get();
             game.findPlayerById(activeMafiaId).ifPresent(mafia -> {
                 if (expectedActors.contains(activeMafiaId)) {
                     NightAction mafiaAction = actions.stream()
@@ -176,33 +181,44 @@ public class ActionService implements ActionServiceInterface {
                 .ifPresent(sheriff -> expected.add(sheriff.getUser().getId()));
 
         // Mafia turn logic
-        Map<String, Object> stageData = game.getStageData();
-        List<Long> mafiaOrder = (List<Long>) stageData.get("mafiaOrder");
-        Integer currentIndex = (Integer) stageData.get("currentMafiaIndex");
-
-        if (mafiaOrder != null && currentIndex != null && !mafiaOrder.isEmpty()) {
-            // Rotate through alive Mafia until we find one
-            int attempts = 0;
-            int index = currentIndex;
-
-            while (attempts < mafiaOrder.size()) {
-                Long mafiaId = mafiaOrder.get(index);
-                boolean alive = game.findPlayerById(mafiaId).map(p -> p.isAlive()).orElse(false);
-
-                if (alive) {
-                    expected.add(mafiaId);
-                    break;
-                }
-
-                // skip to next Mafia
-                index = (index + 1) % mafiaOrder.size();
-                attempts++;
-            }
-        }
+        getActiveMafiaId(game).ifPresent(expected::add);
         for (Long id : expected) {
             System.out.println("\uD83D\uDC37\uD83D\uDC37 Expecting action from player with ID " + id + " (" + game.findPlayerById(id).get().getUser().getUsername());
         }
         return expected;
+    }
+
+    @SuppressWarnings("unchecked")
+    public Optional<Long> getActiveMafiaId(GameSessionRuntime game) {
+        Map<String, Object> stageData = game.getStageData();
+        List<Long> mafiaOrder = (List<Long>) stageData.get("mafiaOrder");
+        Integer currentIndex = (Integer) stageData.get("currentMafiaIndex");
+
+        if (mafiaOrder == null || mafiaOrder.isEmpty() || currentIndex == null) {
+            List<Long> aliveMafia = game.getPlayers().stream()
+                    .filter(PlayerInGame::isAlive)
+                    .filter(p -> p.getRole() != null)
+                    .filter(p -> p.getRole().getRoleName().equalsIgnoreCase("mafia"))
+                    .map(p -> p.getUser().getId())
+                    .toList();
+            return aliveMafia.size() == 1 ? Optional.of(aliveMafia.get(0)) : Optional.empty();
+        }
+
+        int index = Math.floorMod(currentIndex, mafiaOrder.size());
+        for (int attempts = 0; attempts < mafiaOrder.size(); attempts++) {
+            Long mafiaId = mafiaOrder.get(index);
+            boolean alive = game.findPlayerById(mafiaId)
+                    .map(PlayerInGame::isAlive)
+                    .orElse(false);
+
+            if (alive) {
+                return Optional.of(mafiaId);
+            }
+
+            index = (index + 1) % mafiaOrder.size();
+        }
+
+        return Optional.empty();
     }
 
     private void processSheriffSkip(GameSessionRuntime game, PlayerInGame sheriff, ResultStorage storage) {
@@ -222,7 +238,7 @@ public class ActionService implements ActionServiceInterface {
 
         // Optional: if we already track skip counters
         sheriff.setSkipCount(sheriff.getSkipCount()+1);
-        sheriff.setInGameMoney(sheriff.getInGameMoney() + record.getMoneyChange());
+        gameEconomyService.adjustMoney(game, sheriff, record.getMoneyChange(), "Sheriff skipped night");
         game.addLog("Sheriff " + sheriff.getUser().getUsername() + " skipped the night and was penalized " + record.getMoneyChange() + "$.");
     }
 
@@ -276,7 +292,7 @@ public class ActionService implements ActionServiceInterface {
         );
 
         // Apply reward directly
-        sheriff.setInGameMoney(sheriff.getInGameMoney() + reward);
+        gameEconomyService.adjustMoney(game, sheriff, reward, "Sheriff investigation");
         game.addLog("Sheriff " + sheriff.getUser().getUsername() + " received +" + reward + "$ for investigation.");
     }
 
@@ -330,7 +346,7 @@ public class ActionService implements ActionServiceInterface {
         storage.getRecords().add(record);
 
         // Apply money effect immediately
-        sheriff.setInGameMoney(sheriff.getInGameMoney() + moneyChange);
+        gameEconomyService.adjustMoney(game, sheriff, moneyChange, "Sheriff kill");
 
         game.addLog("Sheriff " + sheriff.getUser().getUsername() +
                 " performed a KILL on " + target.getUser().getUsername() +
@@ -357,7 +373,7 @@ public class ActionService implements ActionServiceInterface {
         storage.getRecords().add(record);
 
         mafia.setSkipCount(mafia.getSkipCount() + 1);
-        mafia.setInGameMoney(mafia.getInGameMoney() + record.getMoneyChange());
+        gameEconomyService.adjustMoney(game, mafia, record.getMoneyChange(), "Mafia skipped night");
 
         game.addLog("Mafia " + mafia.getUser().getUsername()
                 + " skipped the night and was penalized " + record.getMoneyChange() + "$.");
@@ -415,7 +431,7 @@ public class ActionService implements ActionServiceInterface {
         storage.getRecords().add(record);
 
         // Apply money gain immediately
-        mafia.setInGameMoney(mafia.getInGameMoney() + moneyChange);
+        gameEconomyService.adjustMoney(game, mafia, moneyChange, "Mafia kill");
 
         game.addLog("Mafia " + mafia.getUser().getUsername()
                 + " performed a KILL on " + target.getUser().getUsername()
@@ -475,7 +491,7 @@ public class ActionService implements ActionServiceInterface {
                     game.addPublicMessage("🤝 " + rule.getAnnouncement() + " Survivors get a small bonus of $25");
                     for (PlayerInGame player : game.getPlayers()) {
                         if (player.isAlive()) {
-                            player.setInGameMoney(player.getInGameMoney() + 25); // small draw game bonus
+                            gameEconomyService.adjustMoney(game, player, 25, "Draw consolation bonus");
                         }
                     }
                 }
@@ -518,7 +534,7 @@ public class ActionService implements ActionServiceInterface {
             // handle side effects like auto-eliminate on repeated skips (if desired).
             if (player.getSkipCount() >= 2) {
                 int penalty = configSettingService.getIntSetting("PenaltyMoneyForNoResponse", 50);
-                player.setInGameMoney(player.getInGameMoney() - penalty);
+                gameEconomyService.adjustMoney(game, player, -penalty, "Repeated skip penalty");
                 player.setAlive(false);
                 game.addLog("Player " + player.getUser().getUsername()
                         + " eliminated due to repeated skips. Extra penalty: -" + penalty + "$.");
@@ -567,10 +583,12 @@ public class ActionService implements ActionServiceInterface {
 
         switch (roleName) {
             case "mafia" -> {
-                actions.add(new NightActionOptionDTO(
-                        "KILL", "Kill", ActionType.TARGET_PLAYER,
-                        1, 0, null, true, null
-                ));
+                if (isActiveMafia(game, player.getUser().getId())) {
+                    actions.add(new NightActionOptionDTO(
+                            "KILL", "Kill", ActionType.TARGET_PLAYER,
+                            1, 0, null, true, null
+                    ));
+                }
             }
             case "sheriff" -> {
                 actions.add(new NightActionOptionDTO(

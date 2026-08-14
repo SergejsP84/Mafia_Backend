@@ -62,6 +62,7 @@ class FourPlayerGameSimulationTest {
         ReflectionTestUtils.setField(actionService, "victoryService", new VictoryService());
         ReflectionTestUtils.setField(actionService, "gameManagerService", gameManagerService);
         ReflectionTestUtils.setField(actionService, "privateMessagingService", privateMessagingService);
+        ReflectionTestUtils.setField(actionService, "gameEconomyService", new GameEconomyService());
     }
 
     @Test

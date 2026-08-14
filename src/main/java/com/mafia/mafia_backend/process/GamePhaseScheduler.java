@@ -44,6 +44,8 @@ public class GamePhaseScheduler {
     private GameHistoryService gameHistoryService;
     @Autowired
     private final PrivateMessagingService privateMessagingService;
+    @Autowired
+    private final GameEconomyService gameEconomyService;
 
     @PostConstruct
     public void init() {
@@ -99,9 +101,9 @@ public class GamePhaseScheduler {
 
         // Placeholder summary for now — we’ll update this after roles are assigned.
         if (total == 4) {
-            return "There are 4 prominent people living in Maf City: 2 Townsfolk, 1 Mafia, 1 Sheriff.";
+            return gameManagerService.generateRoleSummary(total);
         } else {
-            return "A group of " + total + " have gathered... roles will be revealed soon.";
+            return gameManagerService.generateRoleSummary(total);
         }
     }
 
@@ -533,7 +535,7 @@ public class GamePhaseScheduler {
         for (PlayerInGame voter : lynchMob) {
             Role role = voter.getRole();
             int amount = rewards.getOrDefault(role.getRoleName().toLowerCase(), 0);
-            voter.setInGameMoney(voter.getInGameMoney() + amount);
+            gameEconomyService.adjustMoney(game, voter, amount, "Lynch mob reward");
         }
 
         lynchMob.forEach(v ->
@@ -722,7 +724,7 @@ public class GamePhaseScheduler {
             for (PlayerInGame voter : guiltyVoters) {
                 Role role = voter.getRole();
                 int amount = rewards.getOrDefault(role.getRoleName().toLowerCase(), 0);
-                voter.setInGameMoney(voter.getInGameMoney() + amount);
+                gameEconomyService.adjustMoney(game, voter, amount, "Guilty verdict reward");
                 game.addLog("💰 " + voter.getUser().getUsername() + " (" + role.getRoleName() + ") "
                         + (amount >= 0 ? "earned" : "lost") + " " + Math.abs(amount)
                         + "$ for a guilty verdict on " + accused.getUser().getUsername());
@@ -833,7 +835,7 @@ public class GamePhaseScheduler {
             else if (align == Alignment.NEUTRAL) bonus = neutralBonus;
 
             if (bonus > 0) {
-                player.setInGameMoney(player.getInGameMoney() + bonus);
+                gameEconomyService.adjustMoney(game, player, bonus, "Day survival bonus");
                 String roleName = player.getRole().getRoleName();
 
                 // For multiple mafiosi, list once only
@@ -874,7 +876,7 @@ public class GamePhaseScheduler {
             else if (align == Alignment.NEUTRAL) bonus = neutralBonus;
 
             if (bonus > 0) {
-                player.setInGameMoney(player.getInGameMoney() + bonus);
+                gameEconomyService.adjustMoney(game, player, bonus, "Hanging survival bonus");
                 String roleName = player.getRole().getRoleName();
 
                 // For multiple mafiosi, list once only
@@ -927,7 +929,7 @@ public class GamePhaseScheduler {
                 game.addPublicMessage("🤝 It's a draw! Survivors get $25 consolation.");
                 game.getPlayers().stream()
                         .filter(PlayerInGame::isAlive)
-                        .forEach(p -> p.setInGameMoney(p.getInGameMoney() + 25));
+                        .forEach(p -> gameEconomyService.adjustMoney(game, p, 25, "Draw consolation bonus"));
             }
         }
 
@@ -950,7 +952,7 @@ public class GamePhaseScheduler {
 
         for (PlayerInGame p : survivors) {
             if (p.getRole().getAlignment() == winner) {
-                p.setInGameMoney(p.getInGameMoney() + baseBonus);
+                gameEconomyService.adjustMoney(game, p, baseBonus, "Victory bonus");
             }
         }
 
