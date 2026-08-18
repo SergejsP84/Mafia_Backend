@@ -8,6 +8,7 @@ import com.mafia.mafia_backend.domain.entity.Role;
 import com.mafia.mafia_backend.domain.enums.ActionType;
 import com.mafia.mafia_backend.domain.enums.Alignment;
 import com.mafia.mafia_backend.domain.enums.GamePhase;
+import com.mafia.mafia_backend.domain.enums.SurvivalBonusType;
 import com.mafia.mafia_backend.domain.model.*;
 import com.mafia.mafia_backend.domain.enums.NightActionType;
 import com.mafia.mafia_backend.service.interfaces.ActionServiceInterface;
@@ -162,6 +163,8 @@ public class ActionService implements ActionServiceInterface {
         // --- ANNOUNCEMENT PHASE placeholder ---
         announceNightResults(game, resultStorage);
 
+        applyNightSurvivalBonus(game, nightNumber);
+
         // --- VICTORY CHECK placeholder ---
         checkVictoryConditions(game);
 
@@ -227,7 +230,7 @@ public class ActionService implements ActionServiceInterface {
         record.setActingRole("SHERIFF");
         record.setTargetId(null);
         record.setActionType(NightActionType.SKIP);
-        record.setMoneyChange(-10); // penalty for skipping
+        record.setMoneyChange(scaleReward(game, -10)); // penalty for skipping
 
         String message = "The Sheriff decided that the influx of Mafia into town was the perfect time for a trip to Vegas, " +
                 "and slacked the night away, leaving the precinct unattended. " +
@@ -265,6 +268,7 @@ public class ActionService implements ActionServiceInterface {
         } else {
             reward = 0; // checking self
         }
+        reward = scaleReward(game, reward);
 
         // Build the record
         ResultRecord record = new ResultRecord();
@@ -314,11 +318,13 @@ public class ActionService implements ActionServiceInterface {
 
         if (targetRole.equalsIgnoreCase("mafia")) {
             moneyChange = 50; // big bonus
+            moneyChange = scaleReward(game, moneyChange);
             message = "In an epic assault crowning a meticulously planned police operation, "
                     + "the Sheriff has eliminated the MAFIA man " + target.getUser().getUsername()
                     + "! The Sheriff gets a bonus for restoring justice: +" + moneyChange + "$";
         } else if (targetRole.equalsIgnoreCase("townsfolk")) {
             moneyChange = -40; // hefty penalty
+            moneyChange = scaleReward(game, moneyChange);
             message = "Tonight, the Sheriff felt odd from the bottle of moonshine he confiscated earlier "
                     + "and missed during target practice, accidentally shooting the TOWNSFOLK "
                     + target.getUser().getUsername() + "! The Sheriff is fined for negligence: " + moneyChange + "$";
@@ -362,7 +368,7 @@ public class ActionService implements ActionServiceInterface {
         record.setActingRole("MAFIA");
         record.setTargetId(null);
         record.setActionType(NightActionType.SKIP);
-        record.setMoneyChange(-10); // penalty for skipping
+        record.setMoneyChange(scaleReward(game, -10)); // penalty for skipping
         record.setPublicMessage(
                 "The Mafia soldier responsible for tonight's operation spent many hours at the mirror, "
                         + "trying to find a hat that matched both his shoes and his Thompson gun. "
@@ -397,12 +403,14 @@ public class ActionService implements ActionServiceInterface {
 
         if (targetRole.equals("townsfolk")) {
             moneyChange = 20; // small reward for standard hit
+            moneyChange = scaleReward(game, moneyChange);
             message = "Relentless in their attempts to terrorize Mafsville into submission, "
                     + "tonight the Mafia ruthlessly slew the harmless TOWNSFOLK "
                     + target.getUser().getUsername()
                     + "! The Mafia earns a blood bonus: +" + moneyChange + "$.";
         } else if (targetRole.equals("sheriff")) {
             moneyChange = 50; // major reward
+            moneyChange = scaleReward(game, moneyChange);
             message = "An ominous black car was dispatched this night from the Mafia's garage... "
                     + "Woe be to Mafsville — the Mafia managed to eliminate the local SHERIFF "
                     + target.getUser().getUsername()
@@ -414,6 +422,7 @@ public class ActionService implements ActionServiceInterface {
                     + "No reward, no penalty — just shame.";
         } else {
             moneyChange = 10; // default for unclassified roles
+            moneyChange = scaleReward(game, moneyChange);
             message = "The Mafia's bullet found " + target.getUser().getUsername()
                     + ", whose role remains a mystery in Mafsville’s underworld. "
                     + "The Mafia gains a modest bonus: +" + moneyChange + "$.";
@@ -431,7 +440,11 @@ public class ActionService implements ActionServiceInterface {
         storage.getRecords().add(record);
 
         // Apply money gain immediately
-        gameEconomyService.adjustMoney(game, mafia, moneyChange, "Mafia kill");
+        if (isSharedOrdinaryMafiaKillReward(mafia, target)) {
+            applySharedMafiaKillReward(game, moneyChange, "Mafia kill");
+        } else {
+            gameEconomyService.adjustMoney(game, mafia, moneyChange, "Mafia kill");
+        }
 
         game.addLog("Mafia " + mafia.getUser().getUsername()
                 + " performed a KILL on " + target.getUser().getUsername()
@@ -488,10 +501,11 @@ public class ActionService implements ActionServiceInterface {
             if (rule.getWinner() == Alignment.NONE) {
                 // Draw or “everyone died” case
                 if (rule.getAnnouncement().equals("The game is a draw! Well... everyone could have fared better this time.")) {
-                    game.addPublicMessage("🤝 " + rule.getAnnouncement() + " Survivors get a small bonus of $25");
+                    int drawBonus = scaleReward(game, 25);
+                    game.addPublicMessage("🤝 " + rule.getAnnouncement() + " Survivors get a small bonus of $" + drawBonus);
                     for (PlayerInGame player : game.getPlayers()) {
                         if (player.isAlive()) {
-                            gameEconomyService.adjustMoney(game, player, 25, "Draw consolation bonus");
+                            gameEconomyService.adjustMoney(game, player, drawBonus, "Draw consolation bonus");
                         }
                     }
                 }
@@ -566,6 +580,52 @@ public class ActionService implements ActionServiceInterface {
             gameManagerService.handlePlayerDeath(game, target, killerId);
             game.addLog("☠️ applyKillEffect executed: " + target.getUser().getUsername() + " killed by " + killerId);
         });
+    }
+
+    private int scaleReward(GameSessionRuntime game, int baseAmount) {
+        return gameEconomyService.scaleRewardAmount(game, baseAmount);
+    }
+
+    private void applyNightSurvivalBonus(GameSessionRuntime game, int nightNumber) {
+        String guardKey = "nightSurvivalAwarded_" + nightNumber;
+        if (Boolean.TRUE.equals(game.getStageData().get(guardKey))) {
+            game.addLog("Night survival bonus already awarded for night " + nightNumber + " — skipping duplicate award.");
+            return;
+        }
+
+        game.getStageData().put(guardKey, true);
+
+        int referenceBonus = configSettingService.getIntSetting("NightSurvivalBonus", 3);
+        int bonus = gameEconomyService.scaleSurvivalBonusAmount(game, SurvivalBonusType.NIGHT, referenceBonus);
+        if (bonus <= 0) {
+            return;
+        }
+
+        game.getPlayers().stream()
+                .filter(PlayerInGame::isAlive)
+                .forEach(player -> gameEconomyService.adjustMoney(game, player, bonus, "Night survival bonus"));
+
+        game.addPublicMessage("💰 Everyone who survived the night gets a small bonus: $" + bonus + ".");
+    }
+
+    private boolean isSharedOrdinaryMafiaKillReward(PlayerInGame mafia, PlayerInGame target) {
+        if (!isOrdinaryMafia(mafia) || target == null || target.getRole() == null) {
+            return false;
+        }
+        return !target.getRole().getRoleName().equalsIgnoreCase("mafia");
+    }
+
+    private void applySharedMafiaKillReward(GameSessionRuntime game, int scaledAmount, String reason) {
+        game.getPlayers().stream()
+                .filter(PlayerInGame::isAlive)
+                .filter(this::isOrdinaryMafia)
+                .forEach(player -> gameEconomyService.adjustMoney(game, player, scaledAmount, reason));
+    }
+
+    private boolean isOrdinaryMafia(PlayerInGame player) {
+        return player != null
+                && player.getRole() != null
+                && player.getRole().getRoleName().equalsIgnoreCase("mafia");
     }
 
     /**

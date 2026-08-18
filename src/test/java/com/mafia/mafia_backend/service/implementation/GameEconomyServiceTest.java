@@ -3,6 +3,7 @@ package com.mafia.mafia_backend.service.implementation;
 import com.mafia.mafia_backend.domain.entity.Game;
 import com.mafia.mafia_backend.domain.entity.User;
 import com.mafia.mafia_backend.domain.enums.GamePhase;
+import com.mafia.mafia_backend.domain.enums.SurvivalBonusType;
 import com.mafia.mafia_backend.domain.model.GameSessionRuntime;
 import com.mafia.mafia_backend.domain.model.PlayerInGame;
 import org.junit.jupiter.api.BeforeEach;
@@ -196,5 +197,43 @@ class GameEconomyServiceTest {
     @Test
     void rewardScalingRequiresInitialPlayerCount() {
         assertThrows(IllegalStateException.class, () -> economyService.scaleRewardAmount(game, 20));
+    }
+
+    @Test
+    void survivalScalingUsesApprovedAnchorsAndCaps() {
+        assertSurvivalAmounts(4, 1, 2, 1);
+        assertSurvivalAmounts(9, 2, 3, 2);
+        assertSurvivalAmounts(16, 3, 4, 3);
+        assertSurvivalAmounts(21, 4, 5, 4);
+        assertSurvivalAmounts(30, 6, 7, 6);
+        assertSurvivalAmounts(40, 8, 10, 8);
+        assertSurvivalAmounts(50, 10, 12, 10);
+        assertSurvivalAmounts(60, 10, 12, 10);
+    }
+
+    @Test
+    void survivalScalingUsesInitialPlayerCountAfterPlayersAreRemoved() {
+        game.setInitialPlayerCount(50);
+        game.getPlayers().add(player);
+
+        assertEquals(10, economyService.scaleSurvivalBonusAmount(game, SurvivalBonusType.NIGHT, 3));
+
+        game.getPlayers().clear();
+
+        assertEquals(10, economyService.scaleSurvivalBonusAmount(game, SurvivalBonusType.NIGHT, 3));
+    }
+
+    @Test
+    void survivalScalingRequiresInitialPlayerCount() {
+        assertThrows(IllegalStateException.class,
+                () -> economyService.scaleSurvivalBonusAmount(game, SurvivalBonusType.NIGHT, 3));
+    }
+
+    private void assertSurvivalAmounts(int initialPlayerCount, int night, int mafiaDay, int neutralDay) {
+        game.setInitialPlayerCount(initialPlayerCount);
+
+        assertEquals(night, economyService.scaleSurvivalBonusAmount(game, SurvivalBonusType.NIGHT, 3));
+        assertEquals(mafiaDay, economyService.scaleSurvivalBonusAmount(game, SurvivalBonusType.MAFIA_DAY, 4));
+        assertEquals(neutralDay, economyService.scaleSurvivalBonusAmount(game, SurvivalBonusType.NEUTRAL_DAY, 3));
     }
 }

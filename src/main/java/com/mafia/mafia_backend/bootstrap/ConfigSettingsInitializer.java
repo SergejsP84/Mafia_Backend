@@ -55,6 +55,19 @@ public class ConfigSettingsInitializer implements ApplicationRunner {
         } else {
             System.out.println("🐽 Config setting '" + settingName + "' already exists.");
         }
+        settingName = "NightSurvivalBonus";
+        configSettingExists = configSettingRepository.existsByName(settingName);
+        if (!configSettingExists) {
+            ConfigSetting setting = new ConfigSetting();
+            setting.setName(settingName);
+            setting.setEnabled(true);
+            setting.setIntvalue(3);
+            setting.setFloatvalue(0f);
+            configSettingRepository.save(setting);
+            System.out.println("🐽 Config setting '" + settingName + "' created with default values.");
+        } else {
+            System.out.println("🐽 Config setting '" + settingName + "' already exists.");
+        }
         // More to be added here
     }
 }

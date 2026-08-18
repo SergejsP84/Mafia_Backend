@@ -5,6 +5,7 @@ import com.mafia.mafia_backend.domain.entity.RoleRefusalTracker;
 import com.mafia.mafia_backend.domain.entity.User;
 import com.mafia.mafia_backend.domain.enums.Alignment;
 import com.mafia.mafia_backend.domain.enums.GamePhase;
+import com.mafia.mafia_backend.domain.enums.SurvivalBonusType;
 import com.mafia.mafia_backend.domain.model.ContractOrder;
 import com.mafia.mafia_backend.domain.model.PlayerInGame;
 import com.mafia.mafia_backend.domain.model.GameSessionRuntime;
@@ -513,6 +514,7 @@ public class GamePhaseScheduler {
                 case "sheriff" -> sheriffReward;
                 default -> 0;
             };
+            amount = scaleReward(game, amount);
             rewards.put(roleName, amount);
         }
         // Announcing now:
@@ -709,6 +711,7 @@ public class GamePhaseScheduler {
                     case "sheriff" -> sheriffReward;
                     default -> 0;
                 };
+                amount = scaleReward(game, amount);
                 rewards.put(roleName, amount);
             }
 
@@ -831,8 +834,11 @@ public class GamePhaseScheduler {
             int bonus = 0;
             Alignment align = player.getRole().getAlignment();
 
-            if (align == Alignment.MAFIA) bonus = mafBonus;
-            else if (align == Alignment.NEUTRAL) bonus = neutralBonus;
+            if (align == Alignment.MAFIA) {
+                bonus = scaleSurvivalBonus(game, SurvivalBonusType.MAFIA_DAY, mafBonus);
+            } else if (align == Alignment.NEUTRAL) {
+                bonus = scaleSurvivalBonus(game, SurvivalBonusType.NEUTRAL_DAY, neutralBonus);
+            }
 
             if (bonus > 0) {
                 gameEconomyService.adjustMoney(game, player, bonus, "Day survival bonus");
@@ -872,8 +878,11 @@ public class GamePhaseScheduler {
             int bonus = 0;
             Alignment align = player.getRole().getAlignment();
 
-            if (align == Alignment.MAFIA) bonus = mafBonus;
-            else if (align == Alignment.NEUTRAL) bonus = neutralBonus;
+            if (align == Alignment.MAFIA) {
+                bonus = scaleSurvivalBonus(game, SurvivalBonusType.MAFIA_DAY, mafBonus);
+            } else if (align == Alignment.NEUTRAL) {
+                bonus = scaleSurvivalBonus(game, SurvivalBonusType.NEUTRAL_DAY, neutralBonus);
+            }
 
             if (bonus > 0) {
                 gameEconomyService.adjustMoney(game, player, bonus, "Hanging survival bonus");
@@ -898,6 +907,14 @@ public class GamePhaseScheduler {
             sb.setLength(sb.length() - 2);
         }
         game.addPublicMessage(sb.toString());
+    }
+
+    private int scaleReward(GameSessionRuntime game, int baseAmount) {
+        return gameEconomyService.scaleRewardAmount(game, baseAmount);
+    }
+
+    private int scaleSurvivalBonus(GameSessionRuntime game, SurvivalBonusType bonusType, int referenceAmount) {
+        return gameEconomyService.scaleSurvivalBonusAmount(game, bonusType, referenceAmount);
     }
 
     private void handleGameEndedPhase(GameSessionRuntime game) {
@@ -926,10 +943,11 @@ public class GamePhaseScheduler {
             if (Boolean.TRUE.equals(allDead)) {
                 game.addPublicMessage("☠️ All perished in Mafsville. No victors this time.");
             } else if (Boolean.TRUE.equals(isDraw)) {
-                game.addPublicMessage("🤝 It's a draw! Survivors get $25 consolation.");
+                int drawBonus = scaleReward(game, 25);
+                game.addPublicMessage("🤝 It's a draw! Survivors get $" + drawBonus + " consolation.");
                 game.getPlayers().stream()
                         .filter(PlayerInGame::isAlive)
-                        .forEach(p -> gameEconomyService.adjustMoney(game, p, 25, "Draw consolation bonus"));
+                        .forEach(p -> gameEconomyService.adjustMoney(game, p, drawBonus, "Draw consolation bonus"));
             }
         }
 
@@ -946,13 +964,14 @@ public class GamePhaseScheduler {
             case UNDEAD -> baseBonus = 150;
             default -> baseBonus = 0; // no winner
         }
+        int victoryBonus = scaleReward(game, baseBonus);
 
-        game.addPublicMessage("🏆 Victory for " + winner + "! Winning players get a bonus of $" + baseBonus + ".");
-        game.addLog("Applying " + baseBonus + "$ base bonus to surviving members of " + winner);
+        game.addPublicMessage("🏆 Victory for " + winner + "! Winning players get a bonus of $" + victoryBonus + ".");
+        game.addLog("Applying " + victoryBonus + "$ victory bonus to surviving members of " + winner);
 
         for (PlayerInGame p : survivors) {
             if (p.getRole().getAlignment() == winner) {
-                gameEconomyService.adjustMoney(game, p, baseBonus, "Victory bonus");
+                gameEconomyService.adjustMoney(game, p, victoryBonus, "Victory bonus");
             }
         }
 
@@ -999,3 +1018,4 @@ public class GamePhaseScheduler {
 
 
 }
+

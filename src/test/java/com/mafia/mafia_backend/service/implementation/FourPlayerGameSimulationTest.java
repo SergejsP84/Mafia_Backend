@@ -6,6 +6,7 @@ import com.mafia.mafia_backend.domain.entity.User;
 import com.mafia.mafia_backend.domain.enums.Alignment;
 import com.mafia.mafia_backend.domain.enums.GamePhase;
 import com.mafia.mafia_backend.domain.enums.NightActionType;
+import com.mafia.mafia_backend.domain.enums.SurvivalBonusType;
 import com.mafia.mafia_backend.domain.model.GameSessionRuntime;
 import com.mafia.mafia_backend.domain.model.NightAction;
 import com.mafia.mafia_backend.domain.model.PlayerInGame;
@@ -77,8 +78,8 @@ class FourPlayerGameSimulationTest {
         assertFalse(simulation.townsfolkOne.isAlive());
         assertTrue(simulation.sheriff.isAlive());
         assertTrue(simulation.mafia.isAlive());
-        assertEquals(-40, simulation.sheriff.getInGameMoney());
-        assertEquals(20, simulation.mafia.getInGameMoney());
+        assertEquals(-19, simulation.sheriff.getInGameMoney());
+        assertEquals(11, simulation.mafia.getInGameMoney());
         assertEquals(GamePhase.DAY_VOTING, simulation.game.getStage());
     }
 
@@ -93,8 +94,8 @@ class FourPlayerGameSimulationTest {
 
         assertFalse(simulation.sheriff.isAlive());
         assertFalse(simulation.mafia.isAlive());
-        assertEquals(50, simulation.sheriff.getInGameMoney());
-        assertEquals(50, simulation.mafia.getInGameMoney());
+        assertEquals(25, simulation.sheriff.getInGameMoney());
+        assertEquals(25, simulation.mafia.getInGameMoney());
         assertEquals(GamePhase.ENDED, simulation.game.getStage());
     }
 
@@ -122,8 +123,8 @@ class FourPlayerGameSimulationTest {
 
         actionService.resolveNightActions(simulation.game, 1);
 
-        assertEquals(-10, simulation.sheriff.getInGameMoney());
-        assertEquals(-10, simulation.mafia.getInGameMoney());
+        assertEquals(-4, simulation.sheriff.getInGameMoney());
+        assertEquals(-4, simulation.mafia.getInGameMoney());
         assertEquals(GamePhase.DAY_VOTING, simulation.game.getStage());
     }
 
@@ -142,8 +143,29 @@ class FourPlayerGameSimulationTest {
 
         assertTrue(sheriffMessages.stream()
                 .anyMatch(message -> message.contains("MafiaPlayer") && message.contains("Mafia")));
-        assertEquals(30, simulation.sheriff.getInGameMoney());
+        assertEquals(16, simulation.sheriff.getInGameMoney());
         assertEquals(GamePhase.DAY_VOTING, simulation.game.getStage());
+    }
+
+    @Test
+    void sixteenPlayerReferenceAmountsRemainUnchangedForNightActions() {
+        Simulation simulation = newSimulation(16);
+
+        submit(simulation, simulation.sheriff, simulation.mafia, NightActionType.CHECK);
+        submit(simulation, simulation.mafia, simulation.townsfolkOne, NightActionType.KILL);
+
+        actionService.resolveNightActions(simulation.game, 1);
+
+        assertEquals(33, simulation.sheriff.getInGameMoney());
+        assertEquals(23, simulation.mafia.getInGameMoney());
+
+        simulation = newSimulation(16);
+        submit(simulation, simulation.sheriff, simulation.townsfolkOne, NightActionType.KILL);
+        submit(simulation, simulation.mafia, null, NightActionType.SKIP);
+
+        actionService.resolveNightActions(simulation.game, 1);
+
+        assertEquals(-37, simulation.sheriff.getInGameMoney());
     }
 
     @TestFactory
@@ -242,7 +264,9 @@ class FourPlayerGameSimulationTest {
                 case SHERIFF, NONE -> 0;
             };
         }
-        return baseMoney + drawBonusFor(simulation.game, simulation.sheriff);
+        return scaled(baseMoney)
+                + nightSurvivalBonusFor(simulation.game, simulation.sheriff)
+                + drawBonusFor(simulation.game, simulation.sheriff);
     }
 
     private long expectedMafiaMoney(Simulation simulation, ActionChoice mafiaChoice) {
@@ -256,15 +280,26 @@ class FourPlayerGameSimulationTest {
                 case MAFIA, NONE -> 0;
             };
         }
-        return baseMoney + drawBonusFor(simulation.game, simulation.mafia);
+        return scaled(baseMoney)
+                + nightSurvivalBonusFor(simulation.game, simulation.mafia)
+                + drawBonusFor(simulation.game, simulation.mafia);
+    }
+
+    private long nightSurvivalBonusFor(GameSessionRuntime game, PlayerInGame player) {
+        return player.isAlive() ? new GameEconomyService()
+                .scaleSurvivalBonusAmount(game, SurvivalBonusType.NIGHT, 3) : 0L;
     }
 
     private long drawBonusFor(GameSessionRuntime game, PlayerInGame player) {
         return new VictoryService().evaluate(game)
                 .filter(rule -> rule.getWinner() == Alignment.NONE && rule.isDraw())
                 .filter(rule -> player.isAlive())
-                .map(rule -> 25L)
+                .map(rule -> scaled(25))
                 .orElse(0L);
+    }
+
+    private long scaled(long baseMoney) {
+        return Math.round(baseMoney * Math.sqrt(4 / 16.0));
     }
 
     private void assertAliveStates(Simulation simulation, ActionChoice sheriffChoice, ActionChoice mafiaChoice) {
@@ -287,6 +322,10 @@ class FourPlayerGameSimulationTest {
     }
 
     private Simulation newSimulation() {
+        return newSimulation(4);
+    }
+
+    private Simulation newSimulation(int initialPlayerCount) {
         Role mafiaRole = new Role(1L, "Mafia", Alignment.MAFIA, true, false, false, "Standard killer");
         Role sheriffRole = new Role(2L, "Sheriff", Alignment.TOWNSFOLK, true, false, false, "Town investigator");
         Role townsfolkRole = new Role(3L, "Townsfolk", Alignment.TOWNSFOLK, false, false, false, "Citizen");
@@ -300,6 +339,7 @@ class FourPlayerGameSimulationTest {
         game.setGame(new Game());
         game.advanceStage(GamePhase.NIGHT);
         game.setCurrentNightNumber(1);
+        game.setInitialPlayerCount(initialPlayerCount);
         game.setPlayers(new ArrayList<>(List.of(mafia, sheriff, townsfolkOne, townsfolkTwo)));
         game.getStageData().put("mafiaOrder", new ArrayList<>(List.of(mafia.getUser().getId())));
         game.getStageData().put("currentMafiaIndex", 0);

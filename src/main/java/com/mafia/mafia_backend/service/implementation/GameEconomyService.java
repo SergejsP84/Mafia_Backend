@@ -2,6 +2,7 @@ package com.mafia.mafia_backend.service.implementation;
 
 import com.mafia.mafia_backend.domain.model.GameSessionRuntime;
 import com.mafia.mafia_backend.domain.model.PlayerInGame;
+import com.mafia.mafia_backend.domain.enums.SurvivalBonusType;
 import com.mafia.mafia_backend.service.interfaces.GameEconomyServiceInterface;
 import org.springframework.stereotype.Service;
 
@@ -38,6 +39,42 @@ public class GameEconomyService implements GameEconomyServiceInterface {
             return baseAmount > 0 ? 1 : -1;
         }
         return scaledAmount;
+    }
+
+    @Override
+    public int scaleSurvivalBonusAmount(GameSessionRuntime game, SurvivalBonusType bonusType, int referenceAmount) {
+        if (referenceAmount <= 0) {
+            return 0;
+        }
+
+        int playerCount = getInitialPlayerCount(game);
+        int anchoredAmount;
+
+        if (playerCount <= 4) {
+            anchoredAmount = bonusType.getFourPlayerAmount();
+        } else if (playerCount >= 50) {
+            anchoredAmount = bonusType.getMaxAmount();
+        } else if (playerCount <= 16) {
+            anchoredAmount = interpolate(
+                    playerCount,
+                    4,
+                    bonusType.getFourPlayerAmount(),
+                    16,
+                    bonusType.getSixteenPlayerAmount()
+            );
+        } else {
+            anchoredAmount = interpolate(
+                    playerCount,
+                    16,
+                    bonusType.getSixteenPlayerAmount(),
+                    50,
+                    bonusType.getMaxAmount()
+            );
+        }
+
+        double configuredMultiplier = referenceAmount / (double) bonusType.getSixteenPlayerAmount();
+        int scaledAmount = (int) Math.round(anchoredAmount * configuredMultiplier);
+        return Math.min(bonusType.getMaxAmount(), Math.max(1, scaledAmount));
     }
 
     @Override
@@ -79,6 +116,11 @@ public class GameEconomyService implements GameEconomyServiceInterface {
             throw new IllegalStateException("Initial player count is required for reward scaling.");
         }
         return game.getInitialPlayerCount();
+    }
+
+    private int interpolate(int playerCount, int lowPlayers, int lowAmount, int highPlayers, int highAmount) {
+        double raw = lowAmount + ((playerCount - lowPlayers) * (highAmount - lowAmount) / (double) (highPlayers - lowPlayers));
+        return (int) Math.round(raw);
     }
 
     @SuppressWarnings("unchecked")
