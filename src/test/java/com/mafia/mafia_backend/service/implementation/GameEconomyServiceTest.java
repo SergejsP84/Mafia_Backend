@@ -124,6 +124,19 @@ class GameEconomyServiceTest {
     }
 
     @Test
+    void maxDigAmountUsesSeventyFivePercentOfTierTwoThreshold() {
+        assertEquals(45, economyService.getMaxDigAmount(game));
+
+        game.getStageData().put("tierThresholds", Map.of(
+                "tier2", 75,
+                "tier3", 140,
+                "tier4", 240
+        ));
+
+        assertEquals(56, economyService.getMaxDigAmount(game));
+    }
+
+    @Test
     void rewardScalingLeavesSixteenPlayerAmountsUnchanged() {
         game.setInitialPlayerCount(16);
 

@@ -18,4 +18,5 @@ public class ResultRecord {
     private NightActionType actionType;
     private Long actorId;
     private String targetRoleName;
+    private String actionComment;
 }

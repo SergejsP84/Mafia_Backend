@@ -7,5 +7,6 @@ package com.mafia.mafia_backend.domain.dto;
 public record NightActionRequest(
         String actionCode,
         Long targetUserId,
-        String targetRole
+        String targetRole,
+        String comment
 ) {}

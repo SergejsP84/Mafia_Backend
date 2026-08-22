@@ -5,9 +5,11 @@ import com.mafia.mafia_backend.domain.dto.NightActionOptionDTO;
 import com.mafia.mafia_backend.domain.dto.NightTargetsDTO;
 import com.mafia.mafia_backend.domain.dto.TargetUserDTO;
 import com.mafia.mafia_backend.domain.entity.Role;
+import com.mafia.mafia_backend.domain.enums.ActionDisposition;
 import com.mafia.mafia_backend.domain.enums.ActionType;
 import com.mafia.mafia_backend.domain.enums.Alignment;
 import com.mafia.mafia_backend.domain.enums.GamePhase;
+import com.mafia.mafia_backend.domain.enums.PrivateLocation;
 import com.mafia.mafia_backend.domain.enums.SurvivalBonusType;
 import com.mafia.mafia_backend.domain.model.*;
 import com.mafia.mafia_backend.domain.enums.NightActionType;
@@ -40,6 +42,10 @@ public class ActionService implements ActionServiceInterface {
     private PrivateMessagingService privateMessagingService;
     @Autowired
     private GameEconomyService gameEconomyService;
+    @Autowired(required = false)
+    private ShopService shopService;
+    @Autowired(required = false)
+    private PrivateLocationService privateLocationService;
 
     public boolean isActiveMafia(GameSessionRuntime game, Long actorId) {
         return getActiveMafiaId(game)
@@ -49,10 +55,12 @@ public class ActionService implements ActionServiceInterface {
 
     @Override
     public void submitNightAction(GameSessionRuntime game, NightAction action) {
-        game.addNightAction(action.getNightNumber(), action);
-
         PlayerInGame actor = game.findPlayerById(action.getActorId())
                 .orElseThrow(() -> new IllegalArgumentException("Player not found in the game"));
+
+        validateVoluntaryTargeting(game, actor, action);
+
+        game.addNightAction(action.getNightNumber(), action);
 
         actor.setHasActedTonight(true);
 
@@ -76,6 +84,40 @@ public class ActionService implements ActionServiceInterface {
 
         game.addLog("Player " + action.getActorId() + " submitted action: " + action.getActionType()
                 + " targeting " + action.getTargetId());
+    }
+
+    public void validateVoluntaryTargeting(GameSessionRuntime game, PlayerInGame actor, NightAction action) {
+        if (action == null || action.getActionType() == null) {
+            throw new IllegalArgumentException("Action type is required.");
+        }
+        validateVoluntaryTargeting(
+                game,
+                actor.getUser().getId(),
+                action.getTargetId(),
+                action.getTargetId() == null ? ActionType.GLOBAL : ActionType.TARGET_PLAYER,
+                action.getActionType().getDisposition());
+    }
+
+    public void validateVoluntaryTargeting(
+            GameSessionRuntime game,
+            Long actorId,
+            Long targetId,
+            ActionType targetType,
+            ActionDisposition disposition
+    ) {
+        if (privateLocationService == null
+                || targetType != ActionType.TARGET_PLAYER
+                || disposition != ActionDisposition.DETRIMENTAL
+                || targetId == null) {
+            return;
+        }
+
+        Optional<PrivateLocation> conflict = privateLocationService.findNativeLoyaltyConflict(game, actorId, targetId);
+        if (conflict.isPresent()) {
+            throw new IllegalArgumentException(
+                    "Cannot use a detrimental action against a member of your native private location "
+                            + conflict.get() + ". Banish the invited member first if appropriate.");
+        }
     }
 
     @Override
@@ -131,7 +173,7 @@ public class ActionService implements ActionServiceInterface {
                                 .orElse(null);
 
                         if (sheriffAction == null || sheriffAction.getActionType() == NightActionType.SKIP) {
-                            processSheriffSkip(game, sheriff, resultStorage);
+                            processSheriffSkip(game, sheriff, sheriffAction, resultStorage);
                         } else if (sheriffAction.getActionType() == NightActionType.CHECK) {
                             processSheriffCheck(game, sheriff, sheriffAction, resultStorage);
                         } else if (sheriffAction.getActionType() == NightActionType.KILL) {
@@ -152,7 +194,7 @@ public class ActionService implements ActionServiceInterface {
                             .orElse(null);
 
                     if (mafiaAction == null || mafiaAction.getActionType() == NightActionType.SKIP) {
-                        processMafiaSkip(game, mafia, resultStorage);
+                        processMafiaSkip(game, mafia, mafiaAction, resultStorage);
                     } else if (mafiaAction.getActionType() == NightActionType.KILL) {
                         processMafiaKill(game, mafia, mafiaAction, resultStorage);
                     }
@@ -164,6 +206,10 @@ public class ActionService implements ActionServiceInterface {
         announceNightResults(game, resultStorage);
 
         applyNightSurvivalBonus(game, nightNumber);
+
+        if (shopService != null) {
+            shopService.expireNightPurchases(game, nightNumber);
+        }
 
         // --- VICTORY CHECK placeholder ---
         checkVictoryConditions(game);
@@ -224,13 +270,17 @@ public class ActionService implements ActionServiceInterface {
         return Optional.empty();
     }
 
-    private void processSheriffSkip(GameSessionRuntime game, PlayerInGame sheriff, ResultStorage storage) {
+    private void processSheriffSkip(GameSessionRuntime game,
+                                    PlayerInGame sheriff,
+                                    NightAction action,
+                                    ResultStorage storage) {
         ResultRecord record = new ResultRecord();
         record.setActorId(sheriff.getUser().getId());
         record.setActingRole("SHERIFF");
         record.setTargetId(null);
         record.setActionType(NightActionType.SKIP);
         record.setMoneyChange(scaleReward(game, -10)); // penalty for skipping
+        record.setActionComment(actionComment(action));
 
         String message = "The Sheriff decided that the influx of Mafia into town was the perfect time for a trip to Vegas, " +
                 "and slacked the night away, leaving the precinct unattended. " +
@@ -277,6 +327,7 @@ public class ActionService implements ActionServiceInterface {
         record.setActionType(NightActionType.CHECK);
         record.setTargetId(target.getUser().getId());
         record.setMoneyChange(reward);
+        record.setActionComment(actionComment(action));
         record.setPublicMessage(
                 "The Sheriff stayed up all night in the office, busy with detective work, " +
                         "and by morning, he knew exactly who " + target.getUser().getUsername() + " was! " +
@@ -347,6 +398,7 @@ public class ActionService implements ActionServiceInterface {
         record.setActionType(NightActionType.KILL);
         record.setTargetId(target.getUser().getId());
         record.setMoneyChange(moneyChange);
+        record.setActionComment(actionComment(action));
         record.setPublicMessage(message);
 
         storage.getRecords().add(record);
@@ -361,6 +413,7 @@ public class ActionService implements ActionServiceInterface {
 
     private void processMafiaSkip(GameSessionRuntime game,
                                   PlayerInGame mafia,
+                                  NightAction action,
                                   ResultStorage storage) {
 
         ResultRecord record = new ResultRecord();
@@ -369,6 +422,7 @@ public class ActionService implements ActionServiceInterface {
         record.setTargetId(null);
         record.setActionType(NightActionType.SKIP);
         record.setMoneyChange(scaleReward(game, -10)); // penalty for skipping
+        record.setActionComment(actionComment(action));
         record.setPublicMessage(
                 "The Mafia soldier responsible for tonight's operation spent many hours at the mirror, "
                         + "trying to find a hat that matched both his shoes and his Thompson gun. "
@@ -435,6 +489,7 @@ public class ActionService implements ActionServiceInterface {
         record.setActionType(NightActionType.KILL);
         record.setTargetId(target.getUser().getId());
         record.setMoneyChange(moneyChange);
+        record.setActionComment(actionComment(action));
         record.setPublicMessage(message);
 
         storage.getRecords().add(record);
@@ -471,8 +526,9 @@ public class ActionService implements ActionServiceInterface {
             // Real-time wait would happen in scheduler / frontend later
 
             // --- 2️⃣ Public announcement ---
-            game.addPublicMessage(record.getPublicMessage());
-            game.addLog("Announcement displayed: " + record.getPublicMessage());
+            String publicMessage = appendActionComment(record.getPublicMessage(), record.getActingRole(), record.getActionComment());
+            game.addPublicMessage(publicMessage);
+            game.addLog("Announcement displayed: " + publicMessage);
 
             // --- 3️⃣ Apply in-game effects ---
             switch (record.getActionType()) {
@@ -487,6 +543,27 @@ public class ActionService implements ActionServiceInterface {
         }
 
         game.addLog("All nightly results have been announced.");
+    }
+
+    private String actionComment(NightAction action) {
+        return action == null ? null : action.getComment();
+    }
+
+    private String appendActionComment(String baseMessage, String actingRole, String comment) {
+        if (comment == null || comment.isBlank()) {
+            return baseMessage;
+        }
+
+        return baseMessage + " " + formatRoleName(actingRole) + " comments: " + comment;
+    }
+
+    private String formatRoleName(String roleName) {
+        if (roleName == null || roleName.isBlank()) {
+            return "Someone";
+        }
+
+        String lower = roleName.toLowerCase();
+        return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
     }
 
     private void checkVictoryConditions(GameSessionRuntime game) {
@@ -637,6 +714,8 @@ public class ActionService implements ActionServiceInterface {
         // === Example action pool by role (temporary hardcoded logic) ===
         List<NightActionOptionDTO> actions = new ArrayList<>();
 
+        addDigActionIfAvailable(game, player, actions);
+
         String roleName = player.getRole() != null
                 ? player.getRole().getRoleName().toLowerCase()
                 : "townsfolk";
@@ -645,18 +724,18 @@ public class ActionService implements ActionServiceInterface {
             case "mafia" -> {
                 if (isActiveMafia(game, player.getUser().getId())) {
                     actions.add(new NightActionOptionDTO(
-                            "KILL", "Kill", ActionType.TARGET_PLAYER,
+                            "KILL", "Kill", ActionType.TARGET_PLAYER, NightActionType.KILL.getDisposition(),
                             1, 0, null, true, null
                     ));
                 }
             }
             case "sheriff" -> {
                 actions.add(new NightActionOptionDTO(
-                        "CHECK", "Check", ActionType.TARGET_PLAYER,
+                        "CHECK", "Check", ActionType.TARGET_PLAYER, NightActionType.CHECK.getDisposition(),
                         1, 0, null, true, null
                 ));
                 actions.add(new NightActionOptionDTO(
-                        "KILL", "Kill", ActionType.TARGET_PLAYER,
+                        "KILL", "Kill", ActionType.TARGET_PLAYER, NightActionType.KILL.getDisposition(),
                         1, 0, null, true, null
                 ));
             }
@@ -700,5 +779,43 @@ public class ActionService implements ActionServiceInterface {
         }
 
         return new NightActionCatalogDTO(actions, targets, secondsLeft);
+    }
+
+    private void addDigActionIfAvailable(GameSessionRuntime game, PlayerInGame player, List<NightActionOptionDTO> actions) {
+        if (game.getStage() != GamePhase.NIGHT || player == null || player.isHasDugThisGame() || isGhost(player)) {
+            return;
+        }
+        if (!player.isAlive() && !isClassicalUndead(player)) {
+            return;
+        }
+        if (player.getUser() == null || player.getUser().getMoney() == null || player.getUser().getMoney() < 30) {
+            return;
+        }
+
+        int digCap = gameEconomyService.getMaxDigAmount(game);
+        long affordable = player.getUser().getMoney() / 30;
+        int maxDig = (int) Math.min(digCap, affordable);
+        if (maxDig < 1) {
+            return;
+        }
+
+        actions.add(new NightActionOptionDTO(
+                "DIG", "Dig up to $" + maxDig, ActionType.GLOBAL, null,
+                1, null, 1, true, null
+        ));
+    }
+
+    private boolean isGhost(PlayerInGame player) {
+        return player.getRole() != null
+                && player.getRole().getRoleName() != null
+                && player.getRole().getRoleName().equalsIgnoreCase("ghost");
+    }
+
+    private boolean isClassicalUndead(PlayerInGame player) {
+        if (player.getRole() == null || player.getRole().getRoleName() == null) {
+            return false;
+        }
+        String roleName = player.getRole().getRoleName();
+        return roleName.equalsIgnoreCase("vampire") || roleName.equalsIgnoreCase("demon");
     }
 }

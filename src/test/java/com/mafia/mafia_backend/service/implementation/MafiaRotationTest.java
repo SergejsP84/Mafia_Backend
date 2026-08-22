@@ -82,7 +82,7 @@ class MafiaRotationTest {
     void inactiveMafiaCannotSubmitThroughMafiaEndpoint() {
         MultiMafiaGame simulation = newMultiMafiaGame();
         gameManagerService.getActiveGames().add(simulation.game());
-        ActionController controller = new ActionController(actionService, gameManagerService);
+        ActionController controller = new ActionController(actionService, gameManagerService, mock(DigService.class));
 
         ResponseEntity<String> response = controller.mafiaKill(
                 simulation.game().getGame().getId(),

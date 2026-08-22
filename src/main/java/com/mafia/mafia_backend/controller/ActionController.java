@@ -1,5 +1,7 @@
 package com.mafia.mafia_backend.controller;
 
+import com.mafia.mafia_backend.domain.dto.DigRequest;
+import com.mafia.mafia_backend.domain.dto.DigResponse;
 import com.mafia.mafia_backend.domain.dto.NightActionCatalogDTO;
 import com.mafia.mafia_backend.domain.dto.NightActionRequest;
 import com.mafia.mafia_backend.domain.enums.NightActionType;
@@ -7,6 +9,7 @@ import com.mafia.mafia_backend.domain.model.GameSessionRuntime;
 import com.mafia.mafia_backend.domain.model.NightAction;
 import com.mafia.mafia_backend.domain.model.PlayerInGame;
 import com.mafia.mafia_backend.service.implementation.ActionService;
+import com.mafia.mafia_backend.service.implementation.DigService;
 import com.mafia.mafia_backend.service.implementation.GameManagerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +28,7 @@ public class ActionController {
 
     private final ActionService actionService;
     private final GameManagerService gameManagerService;
+    private final DigService digService;
 
     // helper for getting UUID of the GameSessionRuntime
     private UUID getUuid(Long gameId) {
@@ -62,15 +66,15 @@ public class ActionController {
                 : Long.parseLong(raw.toString());
 
         int nightNumber = game.getCurrentNightNumber();
-        NightAction action = new NightAction(actorId, targetId, NightActionType.KILL, nightNumber);
+        NightAction action = new NightAction(actorId, targetId, NightActionType.KILL, nightNumber, extractComment(payload));
 
-        actionService.submitNightAction(game, action);
-        return ResponseEntity.ok("💀 Mafia kill action recorded.");
+        return recordAction(game, action, "💀 Mafia kill action recorded.");
     }
 
     @PostMapping("/mafia/skip")
     public ResponseEntity<String> mafiaSkip(@RequestParam Long gameId,
-                                            @RequestParam Long actorId) {
+                                            @RequestParam Long actorId,
+                                            @RequestBody(required = false) Map<String, Object> payload) {
 
         UUID sessionId = getUuid(gameId);
         if (sessionId == null) {
@@ -86,10 +90,9 @@ public class ActionController {
         }
 
         int nightNumber = game.getCurrentNightNumber();
-        NightAction action = new NightAction(actorId, null, NightActionType.SKIP, nightNumber);
+        NightAction action = new NightAction(actorId, null, NightActionType.SKIP, nightNumber, extractComment(payload));
 
-        actionService.submitNightAction(game, action);
-        return ResponseEntity.ok("😴 Mafia skipped their turn.");
+        return recordAction(game, action, "😴 Mafia skipped their turn.");
     }
 
     @PostMapping("/sheriff/check/{gameId}/{actorId}")
@@ -113,10 +116,9 @@ public class ActionController {
                 : Long.parseLong(raw.toString());
 
         int nightNumber = game.getCurrentNightNumber();
-        NightAction action = new NightAction(actorId, targetId, NightActionType.CHECK, nightNumber);
+        NightAction action = new NightAction(actorId, targetId, NightActionType.CHECK, nightNumber, extractComment(payload));
 
-        actionService.submitNightAction(game, action);
-        return ResponseEntity.ok("🔍 Sheriff investigation submitted.");
+        return recordAction(game, action, "🔍 Sheriff investigation submitted.");
     }
 
     @PostMapping("/sheriff/kill/{gameId}/{actorId}")
@@ -139,15 +141,15 @@ public class ActionController {
                 : Long.parseLong(raw.toString());
 
         int nightNumber = game.getCurrentNightNumber();
-        NightAction action = new NightAction(actorId, targetId, NightActionType.KILL, nightNumber);
+        NightAction action = new NightAction(actorId, targetId, NightActionType.KILL, nightNumber, extractComment(payload));
 
-        actionService.submitNightAction(game, action);
-        return ResponseEntity.ok("🔫 Sheriff kill action recorded.");
+        return recordAction(game, action, "🔫 Sheriff kill action recorded.");
     }
 
     @PostMapping("/sheriff/skip")
     public ResponseEntity<String> sheriffSkip(@RequestParam Long gameId,
-                                              @RequestParam Long actorId) {
+                                              @RequestParam Long actorId,
+                                              @RequestBody(required = false) Map<String, Object> payload) {
 
         UUID sessionId = getUuid(gameId);
         if (sessionId == null) {
@@ -158,10 +160,41 @@ public class ActionController {
         if (game == null) return ResponseEntity.badRequest().body("❌ Game not found");
 
         int nightNumber = game.getCurrentNightNumber();
-        NightAction action = new NightAction(actorId, null, NightActionType.SKIP, nightNumber);
+        NightAction action = new NightAction(actorId, null, NightActionType.SKIP, nightNumber, extractComment(payload));
 
-        actionService.submitNightAction(game, action);
-        return ResponseEntity.ok("😴 Sheriff skipped their turn.");
+        return recordAction(game, action, "😴 Sheriff skipped their turn.");
+    }
+
+    @PostMapping("/dig/{gameId}/{userId}")
+    public ResponseEntity<?> dig(
+            @PathVariable Long gameId,
+            @PathVariable Long userId,
+            @RequestBody DigRequest request
+    ) {
+        if (request == null || request.amount() == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Dig amount is required."));
+        }
+
+        UUID sessionId = getUuid(gameId);
+        if (sessionId == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Session not found for game ID " + gameId));
+        }
+
+        GameSessionRuntime game = gameManagerService.getGameById(sessionId);
+        if (game == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Game not found"));
+        }
+
+        try {
+            DigResponse response = digService.dig(game, userId, request.amount());
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+        }
     }
 
     /**
@@ -198,5 +231,28 @@ public class ActionController {
 
         System.out.println("Night action received: " + msg);
         return ResponseEntity.ok(msg);
+    }
+
+    private String extractComment(Map<String, Object> payload) {
+        if (payload == null || !payload.containsKey("comment")) {
+            return null;
+        }
+
+        Object rawComment = payload.get("comment");
+        return rawComment == null ? null : rawComment.toString();
+    }
+
+    private ResponseEntity<String> recordAction(GameSessionRuntime game, NightAction action, String successMessage) {
+        try {
+            actionService.submitNightAction(game, action);
+            return ResponseEntity.ok(successMessage);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<String> handleIllegalArgument(IllegalArgumentException e) {
+        return ResponseEntity.badRequest().body(e.getMessage());
     }
 }

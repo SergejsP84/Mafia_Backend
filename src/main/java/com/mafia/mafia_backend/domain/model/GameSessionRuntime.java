@@ -27,6 +27,8 @@ public class GameSessionRuntime {
     private List<PlayerInGame> players = new ArrayList<>();     // All players in this match
     private Integer initialPlayerCount;
     private Map<String, Object> stageData = new HashMap<>();    // Optional per-stage info
+    private ShopState shopState;
+    private PrivateLocationState privateLocationState;
     private List<String> log = new ArrayList<>();               // Game log for summary
 
     private boolean isAborted = false;                     // In case not enough players joined

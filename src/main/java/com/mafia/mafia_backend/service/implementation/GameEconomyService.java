@@ -148,7 +148,7 @@ public class GameEconomyService implements GameEconomyServiceInterface {
     public int getMaxDigAmount(GameSessionRuntime game) {
         Map<String, Integer> tierThresholds = getTierThresholdsFromStageData(game);
         int tier2Threshold = tierThresholds.getOrDefault("tier2", 60);
-        return (int) Math.floor(tier2Threshold * 2.0 / 3); // e.g. 60 * 2/3 = 40
+        return (int) Math.floor(tier2Threshold * 0.75);
     }
 
 

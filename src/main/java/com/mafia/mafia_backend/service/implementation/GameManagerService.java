@@ -35,6 +35,10 @@ public class GameManagerService implements GameManagerServiceInterface {
     private final RoleRefusalTrackerRepository roleRefusalTrackerRepository;
     @Autowired
     private PrivateMessagingService privateMessagingService;
+    @Autowired(required = false)
+    private ShopService shopService;
+    @Autowired(required = false)
+    private PrivateLocationService privateLocationService;
     private final GameRegistry gameRegistry;
 
 //    public GameManagerService(ConfigSettingRepository configSettingRepository, RoleRepository roleRepository, UserService userService, ConfigSettingService configSettingService, RoleRefusalTrackerRepository roleRefusalTrackerRepository) {
@@ -320,6 +324,10 @@ public class GameManagerService implements GameManagerServiceInterface {
             assignTownsfolkToRemainingPlayers(game);
             game.addPublicMessage("All roles accepted! The game begins!");
             System.out.println("🐽 All roles accepted! Advancing " + game.getGame().getId() + " to NIGHT phase.");
+            assignPrivateChatAccess(game);
+            if (shopService != null) {
+                shopService.initializeShop(game);
+            }
             game.advanceStage(GamePhase.NIGHT);
             game.addLog("Game moved to NIGHT phase after all roles confirmed.");
         }
@@ -552,6 +560,11 @@ public class GameManagerService implements GameManagerServiceInterface {
 
     @Override
     public void assignPrivateChatAccess(GameSessionRuntime game) {
+        if (privateLocationService != null) {
+            privateLocationService.initializeNativeMemberships(game);
+            return;
+        }
+
         List<Long> officeMembers = new ArrayList<>();
         List<Long> hideoutMembers = new ArrayList<>();
         List<Long> graveyardMembers = new ArrayList<>();
@@ -563,11 +576,8 @@ public class GameManagerService implements GameManagerServiceInterface {
                 case "sheriff", "bum":
                     officeMembers.add(player.getUser().getId());
                     break;
-                case "mafia", "lawyer", "reporter", "agent":
+                case "mafia":
                     hideoutMembers.add(player.getUser().getId());
-                    break;
-                case "necromancer":
-                    graveyardMembers.add(player.getUser().getId());
                     break;
             }
         }
@@ -833,6 +843,9 @@ public class GameManagerService implements GameManagerServiceInterface {
 
         // 6️⃣ Clean up any rotations or stage effects
         removeFromMafiaOrderIfApplicable(game, victim);
+        if (privateLocationService != null) {
+            privateLocationService.removeFromLivingLocations(game, victim.getUser().getId());
+        }
     }
 
     public boolean leaveGame(GameSessionRuntime game, Long userId) {
