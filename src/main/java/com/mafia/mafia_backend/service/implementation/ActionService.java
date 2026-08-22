@@ -46,6 +46,10 @@ public class ActionService implements ActionServiceInterface {
     private ShopService shopService;
     @Autowired(required = false)
     private PrivateLocationService privateLocationService;
+    @Autowired(required = false)
+    private PrivateLocationChatService privateLocationChatService;
+    @Autowired(required = false)
+    private PrivateLocationKnowledgeVaultService privateLocationKnowledgeVaultService;
 
     public boolean isActiveMafia(GameSessionRuntime game, Long actorId) {
         return getActiveMafiaId(game)
@@ -59,8 +63,17 @@ public class ActionService implements ActionServiceInterface {
                 .orElseThrow(() -> new IllegalArgumentException("Player not found in the game"));
 
         validateVoluntaryTargeting(game, actor, action);
+        validateReportableTargetExists(game, action);
+
+        Optional<NightAction> previousAction = game.getActionsForNight(action.getNightNumber()).stream()
+                .filter(existing -> existing.getActorId().equals(action.getActorId()))
+                .findFirst();
 
         game.addNightAction(action.getNightNumber(), action);
+
+        if (privateLocationChatService != null) {
+            privateLocationChatService.reportAcceptedAction(game, actor, action, previousAction.filter(this::isLiveReportable).isPresent());
+        }
 
         actor.setHasActedTonight(true);
 
@@ -122,14 +135,34 @@ public class ActionService implements ActionServiceInterface {
 
     @Override
     public void cancelNightAction(GameSessionRuntime game, Long actorId, int nightNumber) {
+        Optional<NightAction> previousAction = game.getActionsForNight(nightNumber).stream()
+                .filter(existing -> existing.getActorId().equals(actorId))
+                .findFirst();
+
         game.cancelNightAction(nightNumber, actorId);
         Optional<PlayerInGame> playerInGameOptional = game.findPlayerById(actorId);
         if (playerInGameOptional.isPresent()) {
             playerInGameOptional.get().setHasActedTonight(false);
+            if (privateLocationChatService != null) {
+                previousAction.ifPresent(action ->
+                        privateLocationChatService.reportCancelledAction(game, playerInGameOptional.get(), action));
+            }
         } else {
             throw new IllegalArgumentException("Player not found in the game");
         }
         game.addLog("Player " + actorId + " cancelled their night action.");
+    }
+
+    private void validateReportableTargetExists(GameSessionRuntime game, NightAction action) {
+        if (isLiveReportable(action) && game.findPlayerById(action.getTargetId()).isEmpty()) {
+            throw new IllegalArgumentException("Target player not found in the game.");
+        }
+    }
+
+    private boolean isLiveReportable(NightAction action) {
+        return action != null
+                && action.getTargetId() != null
+                && (action.getActionType() == NightActionType.KILL || action.getActionType() == NightActionType.CHECK);
     }
 
     @Override
@@ -308,6 +341,7 @@ public class ActionService implements ActionServiceInterface {
         }
 
         String targetRoleName = target.getRole().getRoleName();
+        String perceivedRole = targetRoleName;
         int reward = 0;
 
         // Determine monetary reward
@@ -338,13 +372,20 @@ public class ActionService implements ActionServiceInterface {
 
         // Log the private intelligence result (for now in logs)
         String privateInfo = "Intelligence has revealed that " + target.getUser().getUsername() +
-                " is a " + targetRoleName + "!";
+                " is a " + perceivedRole + "!";
         game.addLog("[Office Intel for Sheriff " + sheriff.getUser().getUsername() + "]: " + privateInfo);
 
         privateMessagingService.sendPrivateMessage(
                 sheriff.getUser().getId(),
                 "🔍 " + privateInfo
         );
+        if (privateLocationKnowledgeVaultService != null) {
+            privateLocationKnowledgeVaultService.recordKnowledge(
+                    game,
+                    PrivateLocation.OFFICE,
+                    target.getUser().getId(),
+                    perceivedRole);
+        }
 
         // Apply reward directly
         gameEconomyService.adjustMoney(game, sheriff, reward, "Sheriff investigation");

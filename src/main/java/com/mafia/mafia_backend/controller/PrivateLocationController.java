@@ -4,9 +4,14 @@ import com.mafia.mafia_backend.domain.dto.LocationAccessDTO;
 import com.mafia.mafia_backend.domain.dto.LocationMembersDTO;
 import com.mafia.mafia_backend.domain.dto.LocationMembershipChangeRequest;
 import com.mafia.mafia_backend.domain.dto.LocationMembershipResponse;
+import com.mafia.mafia_backend.domain.dto.PrivateLocationKnowledgeDTO;
+import com.mafia.mafia_backend.domain.dto.PrivateLocationMessageDTO;
+import com.mafia.mafia_backend.domain.dto.PrivateLocationMessageRequest;
 import com.mafia.mafia_backend.domain.enums.PrivateLocation;
 import com.mafia.mafia_backend.domain.model.GameSessionRuntime;
 import com.mafia.mafia_backend.service.implementation.GameManagerService;
+import com.mafia.mafia_backend.service.implementation.PrivateLocationChatService;
+import com.mafia.mafia_backend.service.implementation.PrivateLocationKnowledgeVaultService;
 import com.mafia.mafia_backend.service.implementation.PrivateLocationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -19,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -28,6 +34,8 @@ public class PrivateLocationController {
 
     private final GameManagerService gameManagerService;
     private final PrivateLocationService privateLocationService;
+    private final PrivateLocationChatService privateLocationChatService;
+    private final PrivateLocationKnowledgeVaultService privateLocationKnowledgeVaultService;
 
     @GetMapping("/{gameId}/{userId}")
     public ResponseEntity<?> access(@PathVariable Long gameId, @PathVariable Long userId) {
@@ -84,6 +92,79 @@ public class PrivateLocationController {
             @RequestBody LocationMembershipChangeRequest request
     ) {
         return changeMembership(gameId, location, request, false);
+    }
+
+    @GetMapping("/{gameId}/{location}/messages")
+    public ResponseEntity<?> messages(
+            @PathVariable Long gameId,
+            @PathVariable String location,
+            @RequestParam Long requesterId
+    ) {
+        GameSessionRuntime game = gameManagerService.findByGameId(gameId);
+        if (game == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Game not found"));
+        }
+
+        try {
+            return ResponseEntity.ok(privateLocationChatService.getMessages(game, parseLocation(location), requesterId));
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", e.getMessage()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{gameId}/{location}/messages")
+    public ResponseEntity<?> postMessage(
+            @PathVariable Long gameId,
+            @PathVariable String location,
+            @RequestBody PrivateLocationMessageRequest request
+    ) {
+        if (request == null || request.senderId() == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "senderId is required."));
+        }
+
+        GameSessionRuntime game = gameManagerService.findByGameId(gameId);
+        if (game == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Game not found"));
+        }
+
+        try {
+            PrivateLocationMessageDTO response = privateLocationChatService.postUserMessage(
+                    game,
+                    parseLocation(location),
+                    request.senderId(),
+                    request.message());
+            return ResponseEntity.ok(response);
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", e.getMessage()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/{gameId}/{location}/vault")
+    public ResponseEntity<?> vault(
+            @PathVariable Long gameId,
+            @PathVariable String location,
+            @RequestParam Long requesterId
+    ) {
+        GameSessionRuntime game = gameManagerService.findByGameId(gameId);
+        if (game == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Game not found"));
+        }
+
+        try {
+            List<PrivateLocationKnowledgeDTO> response = privateLocationKnowledgeVaultService.getKnowledgeForMember(
+                    game,
+                    parseLocation(location),
+                    requesterId);
+            return ResponseEntity.ok(response);
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", e.getMessage()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     private ResponseEntity<?> changeMembership(

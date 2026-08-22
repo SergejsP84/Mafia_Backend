@@ -2,6 +2,7 @@ package com.mafia.mafia_backend.domain.model;
 
 import com.mafia.mafia_backend.domain.entity.Game;
 import com.mafia.mafia_backend.domain.enums.GamePhase;
+import com.mafia.mafia_backend.domain.enums.PrivateLocation;
 import com.mafia.mafia_backend.service.implementation.ConfigSettingService;
 import lombok.Getter;
 import lombok.Setter;
@@ -29,6 +30,8 @@ public class GameSessionRuntime {
     private Map<String, Object> stageData = new HashMap<>();    // Optional per-stage info
     private ShopState shopState;
     private PrivateLocationState privateLocationState;
+    private Map<PrivateLocation, List<PrivateLocationMessage>> privateLocationMessages = new EnumMap<>(PrivateLocation.class);
+    private Map<PrivateLocation, Map<Long, PrivateLocationKnowledgeRecord>> privateLocationKnowledgeVaults = new EnumMap<>(PrivateLocation.class);
     private List<String> log = new ArrayList<>();               // Game log for summary
 
     private boolean isAborted = false;                     // In case not enough players joined
@@ -131,6 +134,14 @@ public class GameSessionRuntime {
 
     public void cancelNightAction(int nightNumber, Long actorId) {
         getActionsForNight(nightNumber).removeIf(a -> a.getActorId().equals(actorId));
+    }
+
+    public List<PrivateLocationMessage> getMessagesForPrivateLocation(PrivateLocation location) {
+        return privateLocationMessages.computeIfAbsent(location, key -> new ArrayList<>());
+    }
+
+    public Map<Long, PrivateLocationKnowledgeRecord> getKnowledgeVaultForPrivateLocation(PrivateLocation location) {
+        return privateLocationKnowledgeVaults.computeIfAbsent(location, key -> new LinkedHashMap<>());
     }
 
     public synchronized void castVote(Long voterId, Long targetId, boolean voteForNight) {

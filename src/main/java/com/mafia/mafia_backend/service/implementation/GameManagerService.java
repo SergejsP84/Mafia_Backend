@@ -39,6 +39,8 @@ public class GameManagerService implements GameManagerServiceInterface {
     private ShopService shopService;
     @Autowired(required = false)
     private PrivateLocationService privateLocationService;
+    @Autowired(required = false)
+    private PrivateLocationKnowledgeVaultService privateLocationKnowledgeVaultService;
     private final GameRegistry gameRegistry;
 
 //    public GameManagerService(ConfigSettingRepository configSettingRepository, RoleRepository roleRepository, UserService userService, ConfigSettingService configSettingService, RoleRefusalTrackerRepository roleRefusalTrackerRepository) {
@@ -845,6 +847,9 @@ public class GameManagerService implements GameManagerServiceInterface {
         removeFromMafiaOrderIfApplicable(game, victim);
         if (privateLocationService != null) {
             privateLocationService.removeFromLivingLocations(game, victim.getUser().getId());
+        }
+        if (privateLocationKnowledgeVaultService != null) {
+            privateLocationKnowledgeVaultService.removeKnowledgeAboutPlayer(game, victim.getUser().getId());
         }
     }
 
