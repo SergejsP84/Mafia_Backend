@@ -50,6 +50,8 @@ public class ActionService implements ActionServiceInterface {
     private PrivateLocationChatService privateLocationChatService;
     @Autowired(required = false)
     private PrivateLocationKnowledgeVaultService privateLocationKnowledgeVaultService;
+    @Autowired(required = false)
+    private VoiceService voiceService;
 
     public boolean isActiveMafia(GameSessionRuntime game, Long actorId) {
         return getActiveMafiaId(game)
@@ -756,6 +758,7 @@ public class ActionService implements ActionServiceInterface {
         List<NightActionOptionDTO> actions = new ArrayList<>();
 
         addDigActionIfAvailable(game, player, actions);
+        addVoiceActionIfAvailable(game, player, actions);
 
         String roleName = player.getRole() != null
                 ? player.getRole().getRoleName().toLowerCase()
@@ -843,6 +846,17 @@ public class ActionService implements ActionServiceInterface {
         actions.add(new NightActionOptionDTO(
                 "DIG", "Dig up to $" + maxDig, ActionType.GLOBAL, null,
                 1, null, 1, true, null
+        ));
+    }
+
+    private void addVoiceActionIfAvailable(GameSessionRuntime game, PlayerInGame player, List<NightActionOptionDTO> actions) {
+        if (voiceService == null || !voiceService.canVoice(game, player)) {
+            return;
+        }
+
+        actions.add(new NightActionOptionDTO(
+                "VOICE", "Voice", ActionType.GLOBAL, null,
+                VoiceService.MINIMUM_TIER, null, null, true, null
         ));
     }
 

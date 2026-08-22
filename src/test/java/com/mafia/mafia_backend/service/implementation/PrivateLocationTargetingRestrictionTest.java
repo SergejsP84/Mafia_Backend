@@ -207,7 +207,7 @@ class PrivateLocationTargetingRestrictionTest {
                 mock(GameRegistry.class));
         gameManagerService.getActiveGames().add(game);
 
-        ActionController controller = new ActionController(actionService, gameManagerService, mock(DigService.class));
+        ActionController controller = new ActionController(actionService, gameManagerService, mock(DigService.class), mock(VoiceService.class));
 
         ResponseEntity<String> inactiveResponse = controller.mafiaKill(
                 game.getGame().getId(),

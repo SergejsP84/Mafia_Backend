@@ -4,6 +4,8 @@ import com.mafia.mafia_backend.domain.dto.DigRequest;
 import com.mafia.mafia_backend.domain.dto.DigResponse;
 import com.mafia.mafia_backend.domain.dto.NightActionCatalogDTO;
 import com.mafia.mafia_backend.domain.dto.NightActionRequest;
+import com.mafia.mafia_backend.domain.dto.VoiceRequest;
+import com.mafia.mafia_backend.domain.dto.VoiceResponse;
 import com.mafia.mafia_backend.domain.enums.NightActionType;
 import com.mafia.mafia_backend.domain.model.GameSessionRuntime;
 import com.mafia.mafia_backend.domain.model.NightAction;
@@ -11,8 +13,8 @@ import com.mafia.mafia_backend.domain.model.PlayerInGame;
 import com.mafia.mafia_backend.service.implementation.ActionService;
 import com.mafia.mafia_backend.service.implementation.DigService;
 import com.mafia.mafia_backend.service.implementation.GameManagerService;
+import com.mafia.mafia_backend.service.implementation.VoiceService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -29,6 +31,7 @@ public class ActionController {
     private final ActionService actionService;
     private final GameManagerService gameManagerService;
     private final DigService digService;
+    private final VoiceService voiceService;
 
     // helper for getting UUID of the GameSessionRuntime
     private UUID getUuid(Long gameId) {
@@ -189,6 +192,38 @@ public class ActionController {
 
         try {
             DigResponse response = digService.dig(game, userId, request.amount());
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/voice/{gameId}/{userId}")
+    public ResponseEntity<?> voice(
+            @PathVariable Long gameId,
+            @PathVariable Long userId,
+            @RequestBody VoiceRequest request
+    ) {
+        if (request == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Voice message is required."));
+        }
+
+        UUID sessionId = getUuid(gameId);
+        if (sessionId == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Session not found for game ID " + gameId));
+        }
+
+        GameSessionRuntime game = gameManagerService.getGameById(sessionId);
+        if (game == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Game not found"));
+        }
+
+        try {
+            VoiceResponse response = voiceService.voice(game, userId, request.message());
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

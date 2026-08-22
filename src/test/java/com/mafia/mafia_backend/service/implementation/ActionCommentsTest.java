@@ -241,7 +241,7 @@ class ActionCommentsTest {
         when(gameManagerService.getActiveGames()).thenReturn(List.of(game));
         when(gameManagerService.getGameById(game.getSessionId())).thenReturn(game);
 
-        ActionController controller = new ActionController(actionService, gameManagerService, mock(DigService.class));
+        ActionController controller = new ActionController(actionService, gameManagerService, mock(DigService.class), mock(VoiceService.class));
         ResponseEntity<String> response = controller.mafiaKill(
                 game.getGame().getId(),
                 mafiaTwo.getUser().getId(),
